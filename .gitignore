@@ -7,7 +7,7 @@ node_modules/
 # verification runs create.
 .data/
 
-uploads/
+/uploads/
 logs/
 *.log
 npm-debug.log*
