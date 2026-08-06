@@ -1,0 +1,18 @@
+node_modules/
+.env
+.env.*
+!.env.example
+
+# The embedded PostgreSQL data directory, and the scratch databases the
+# verification runs create.
+.data/
+
+uploads/
+logs/
+*.log
+npm-debug.log*
+.DS_Store
+coverage/
+dist/
+.vscode/
+.idea/
