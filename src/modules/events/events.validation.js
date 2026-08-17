@@ -53,11 +53,17 @@ const base = {
   coverImageUrl: z.string().trim().url().max(500).optional(),
 };
 
-/** The moment an event begins, from its calendar date and its start time. */
-const startsAt = (v) => Date.parse(`${v.date}T${v.startTime ?? '00:00'}:00`);
-
-/** The end of the day the event falls on, in the server's own zone. */
-const endOfEventDay = (v) => Date.parse(`${v.date}T23:59:59`);
+/**
+ * Dates are compared as calendar days, never as instants.
+ *
+ * `date` is a plain 'YYYY-MM-DD' with no zone, while `registrationClosesAt` is
+ * an instant in UTC. Parsing the first as a local time and the second as UTC
+ * makes the comparison depend on where the server happens to be running, which
+ * is how a rule starts failing at one time of day and passing at another.
+ * Comparing the calendar day of each sidesteps the whole question.
+ */
+const dayOf = (isoInstant) => String(isoInstant).slice(0, 10);
+const todayUtc = () => new Date().toISOString().slice(0, 10);
 
 /**
  * The window has to close after it opens, and a free event cannot carry a
@@ -82,13 +88,13 @@ const coherent = (schema) =>
         v.endTime > v.startTime,
       { path: ['endTime'], message: 'The event has to end after it starts' },
     )
-    /* Registration that is still open after the event has started sells seats
-       to something already under way. This was only caught on the member's
-       side, where the event simply read as over. */
+    /* Registration that is still open after the event has happened sells seats
+       to something already over. This was only caught on the member's side,
+       where the event simply read as finished. */
     .refine(
       (v) =>
         v.date === undefined || v.registrationClosesAt === undefined ||
-        Date.parse(v.registrationClosesAt) <= endOfEventDay(v),
+        dayOf(v.registrationClosesAt) <= v.date,
       {
         path: ['registrationClosesAt'],
         message: 'Registration must close by the day the event takes place',
@@ -99,10 +105,11 @@ const coherent = (schema) =>
  * A new event cannot be in the past.
  *
  * Only applied on creation: an existing event's date is left alone so that a
- * past event can still be corrected or cancelled after the fact.
+ * past event can still be corrected or cancelled after the fact. Today counts
+ * as valid — an event added on the morning of the day it runs is ordinary.
  */
 const notInThePast = (schema) =>
-  schema.refine((v) => v.date === undefined || startsAt(v) >= Date.now() - 60_000, {
+  schema.refine((v) => v.date === undefined || v.date >= todayUtc(), {
     path: ['date'],
     message: 'That date has already passed — choose a date in the future',
   });
