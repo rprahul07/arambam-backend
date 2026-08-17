@@ -54,6 +54,18 @@ const base = {
 };
 
 /**
+ * Dates are compared as calendar days, never as instants.
+ *
+ * `date` is a plain 'YYYY-MM-DD' with no zone, while `registrationClosesAt` is
+ * an instant in UTC. Parsing the first as a local time and the second as UTC
+ * makes the comparison depend on where the server happens to be running, which
+ * is how a rule starts failing at one time of day and passing at another.
+ * Comparing the calendar day of each sidesteps the whole question.
+ */
+const dayOf = (isoInstant) => String(isoInstant).slice(0, 10);
+const todayUtc = () => new Date().toISOString().slice(0, 10);
+
+/**
  * The window has to close after it opens, and a free event cannot carry a
  * price. Both are also database constraints — this layer exists so the person
  * filling in the form gets the message against the right field.
@@ -70,9 +82,39 @@ const coherent = (schema) =>
     .refine(
       (v) => v.type !== 'free' || ((v.memberPrice ?? 0) === 0 && (v.nonMemberPrice ?? 0) === 0),
       { path: ['memberPrice'], message: 'A free event cannot have a price' },
+    )
+    .refine(
+      (v) => v.date === undefined || v.startTime === undefined || v.endTime === undefined ||
+        v.endTime > v.startTime,
+      { path: ['endTime'], message: 'The event has to end after it starts' },
+    )
+    /* Registration that is still open after the event has happened sells seats
+       to something already over. This was only caught on the member's side,
+       where the event simply read as finished. */
+    .refine(
+      (v) =>
+        v.date === undefined || v.registrationClosesAt === undefined ||
+        dayOf(v.registrationClosesAt) <= v.date,
+      {
+        path: ['registrationClosesAt'],
+        message: 'Registration must close by the day the event takes place',
+      },
     );
 
-export const createEventSchema = coherent(z.object({ ...base, id: clientId }));
+/**
+ * A new event cannot be in the past.
+ *
+ * Only applied on creation: an existing event's date is left alone so that a
+ * past event can still be corrected or cancelled after the fact. Today counts
+ * as valid — an event added on the morning of the day it runs is ordinary.
+ */
+const notInThePast = (schema) =>
+  schema.refine((v) => v.date === undefined || v.date >= todayUtc(), {
+    path: ['date'],
+    message: 'That date has already passed — choose a date in the future',
+  });
+
+export const createEventSchema = notInThePast(coherent(z.object({ ...base, id: clientId })));
 
 export const updateEventSchema = coherent(
   z.object(Object.fromEntries(Object.entries(base).map(([key, value]) => [key, value.optional()]))),

@@ -109,21 +109,16 @@ export async function begin({ eventId, memberId, method, id, paymentId }, actor)
       remaining: Math.max(0, Number(event.capacity) - counted.booked),
     };
 
-    // An administrator booking someone in at the door is allowed past the
-    // window, but never past the capacity.
-    const isStaff = actor.role === ROLES.ADMIN || actor.role === ROLES.ORGANIZER;
-    const gate = registrationOpen(event, seats);
-    if (!gate.open && !(isStaff && seats.remaining > 0 && event.lifecycle !== EVENT_LIFECYCLE.CANCELLED)) {
-      throw ApiError.conflict(gate.reason, undefined, 'REGISTRATION_CLOSED');
-    }
-
+    /* A seat this member already holds is settled before capacity is
+       considered at all. Returning to finish a payment is not a request for
+       another seat, and their own hold is part of the count — so on a small
+       event the member's own booking made the event read as sold out and
+       locked them out of the payment they had already started. */
     const existing = await tx.queryOne(
       `SELECT * FROM registrations WHERE event_id = $1 AND member_id = $2 AND status <> 'cancelled'`,
       [eventId, memberId],
     );
     if (existing) {
-      // Re-entering the payment dialog on a held seat is normal; hand back the
-      // seat and its payment rather than minting a second one.
       const payment = existing.payment_id
         ? await tx.queryOne(`SELECT * FROM payments WHERE id = $1`, [existing.payment_id])
         : null;
@@ -131,6 +126,14 @@ export async function begin({ eventId, memberId, method, id, paymentId }, actor)
         return { registration: existing, payment, event, member, reused: true };
       }
       throw ApiError.conflict('You already hold a seat on this event', undefined, 'ALREADY_REGISTERED');
+    }
+
+    // An administrator booking someone in at the door is allowed past the
+    // window, but never past the capacity.
+    const isStaff = actor.role === ROLES.ADMIN || actor.role === ROLES.ORGANIZER;
+    const gate = registrationOpen(event, seats);
+    if (!gate.open && !(isStaff && seats.remaining > 0 && event.lifecycle !== EVENT_LIFECYCLE.CANCELLED)) {
+      throw ApiError.conflict(gate.reason, undefined, 'REGISTRATION_CLOSED');
     }
 
     const pricedAsMember = member.status === MEMBERSHIP_STATUS.ACTIVE;
@@ -286,6 +289,23 @@ export async function setAttendance(id, attendance, actor) {
     throw ApiError.conflict('That seat was released — it cannot be checked in');
   }
 
+  // Same rule as the ticket scanner: an event that is not running has no door
+  // to check anyone in at.
+  if (attendance === ATTENDANCE.ATTENDED) {
+    const event = await queryOne(`SELECT lifecycle, title FROM events WHERE id = $1`, [
+      registration.event_id,
+    ]);
+    if (event?.lifecycle === EVENT_LIFECYCLE.DRAFT || event?.lifecycle === EVENT_LIFECYCLE.CANCELLED) {
+      throw ApiError.conflict(
+        event.lifecycle === EVENT_LIFECYCLE.DRAFT
+          ? 'This event has not been published yet, so nobody can be checked in'
+          : 'This event was cancelled, so nobody can be checked in',
+        undefined,
+        'EVENT_NOT_RUNNING',
+      );
+    }
+  }
+
   const row = await queryOne(
     `UPDATE registrations
      SET attendance = $1,
@@ -334,6 +354,13 @@ export async function checkInByCode({ eventId, code }, actor) {
   }
 
   const eventPayload = { ...payload, event: toEvent(event) };
+
+  // Nobody attends an event that is not running. A draft is still being
+  // written and a cancelled one is not happening, so a ticket code typed in
+  // against either is refused rather than quietly recorded as an arrival.
+  if (event.lifecycle === EVENT_LIFECYCLE.DRAFT || event.lifecycle === EVENT_LIFECYCLE.CANCELLED) {
+    return { kind: 'not_running', ...eventPayload };
+  }
 
   if (registration.status === REGISTRATION_STATUS.CANCELLED) return { kind: 'cancelled', ...eventPayload };
   if (registration.attendance === ATTENDANCE.ATTENDED) {

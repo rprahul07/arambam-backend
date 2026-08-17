@@ -42,13 +42,27 @@ export const MINOR_AGE = 18;
 
 export const SUBSCRIPTION_STATUS = {
   ACTIVE: 'active',
+  /** Paid for, but its term has not started yet. */
+  SCHEDULED: 'scheduled',
   EXPIRED: 'expired',
   CANCELLED: 'cancelled',
   PENDING: 'pending',
 };
 export const SUBSCRIPTION_STATUS_VALUES = Object.values(SUBSCRIPTION_STATUS);
 
-export const SUBSCRIPTION_KIND_VALUES = ['new', 'renewal', 'upgrade'];
+/** Statuses that mean the member has paid for that period. */
+export const SUBSCRIPTION_PAID_STATUSES = [
+  SUBSCRIPTION_STATUS.ACTIVE,
+  SUBSCRIPTION_STATUS.SCHEDULED,
+];
+
+export const SUBSCRIPTION_KIND = {
+  NEW: 'new',
+  RENEWAL: 'renewal',
+  UPGRADE: 'upgrade',
+  DOWNGRADE: 'downgrade',
+};
+export const SUBSCRIPTION_KIND_VALUES = Object.values(SUBSCRIPTION_KIND);
 
 /* ----------------------------------------------------------------- events */
 
