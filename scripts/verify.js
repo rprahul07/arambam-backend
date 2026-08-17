@@ -373,6 +373,11 @@ try {
   section('Membership purchase');
 
   const plan = md.plans.find((p) => p.active && p.name === 'Premium') ?? md.plans.find((p) => p.active);
+  const heldBefore = md.subscriptions.find(
+    (s) => s.memberId === memberId && s.status === 'active',
+  );
+  const heldPlan = md.plans.find((p) => p.id === heldBefore?.planId);
+
   const purchase = await member.client.post('/subscriptions', {
     planId: plan.id,
     kind: 'upgrade',
@@ -383,14 +388,27 @@ try {
     purchase.body.data.subscription.status === 'pending' &&
     purchase.body.data.payment.status === 'pending',
     purchase.body);
-  check('the validity window matches the plan duration', (() => {
+
+  // Moving to a dearer plan is charged at the difference and inherits the end
+  // date already paid for; a first purchase runs the plan's full duration.
+  check('an upgrade costs the difference, not the whole plan again', (() => {
     const s = purchase.body.data.subscription;
     if (!s) return false;
-    const months =
-      (new Date(s.endDate).getFullYear() - new Date(s.startDate).getFullYear()) * 12 +
-      (new Date(s.endDate).getMonth() - new Date(s.startDate).getMonth());
-    return months === plan.durationMonths;
-  })(), purchase.body?.data?.subscription);
+    if (!heldBefore || !heldPlan) return s.amount === plan.price;
+    return s.kind === 'upgrade' && s.amount === plan.price - heldPlan.price;
+  })(), { subscription: purchase.body?.data?.subscription, heldPlan: heldPlan?.name });
+
+  check('an upgrade keeps the end date the member already holds', (() => {
+    const s = purchase.body.data.subscription;
+    if (!s) return false;
+    if (!heldBefore) {
+      const months =
+        (new Date(s.endDate).getFullYear() - new Date(s.startDate).getFullYear()) * 12 +
+        (new Date(s.endDate).getMonth() - new Date(s.startDate).getMonth());
+      return months === plan.durationMonths;
+    }
+    return s.endDate === heldBefore.endDate;
+  })(), { got: purchase.body?.data?.subscription?.endDate, expected: heldBefore?.endDate });
 
   const subSettled = await member.client.post(
     `/payments/${purchase.body.data.payment.id}/settle`, { outcome: 'successful' });
@@ -414,6 +432,112 @@ try {
     declined.status === 200 && declined.body.data.status === 'failed', declined.body);
   check('a failed payment carries a reason and no receipt',
     Boolean(declined.body.data.failureReason) && !declined.body.data.receiptNo, declined.body.data);
+
+  /* ================================== renewing, queuing and downgrading */
+
+  section('Renewals and plan changes');
+
+  const beforeRenewal = await member.client.get('/bootstrap');
+  const inForce = beforeRenewal.body.data.subscriptions.find(
+    (s) => s.memberId === memberId && s.status === 'active',
+  );
+  const inForcePlan = beforeRenewal.body.data.plans.find((p) => p.id === inForce?.planId);
+  const dayAfter = (iso) =>
+    new Date(new Date(`${iso}T00:00:00Z`).getTime() + 86_400_000).toISOString().slice(0, 10);
+
+  const renewal = await member.client.post('/subscriptions', {
+    planId: inForce.planId,
+    method: 'upi',
+  });
+  check('renewing the same plan is recognised as a renewal',
+    renewal.status === 201 && renewal.body.data.subscription.kind === 'renewal',
+    renewal.body?.data?.subscription);
+  check('a renewal begins the day the current term ends, so no paid day is lost',
+    renewal.body.data.subscription.startDate === dayAfter(inForce.endDate),
+    { start: renewal.body?.data?.subscription?.startDate, currentEnd: inForce.endDate });
+  check('a renewal is charged the full plan price',
+    renewal.body.data.subscription.amount === inForcePlan.price,
+    { amount: renewal.body?.data?.subscription?.amount, price: inForcePlan.price });
+
+  const renewalSettled = await member.client.post(
+    `/payments/${renewal.body.data.payment.id}/settle`, { outcome: 'successful' });
+  check('the renewal payment settles', renewalSettled.status === 200, renewalSettled.body);
+
+  const afterRenewal = await member.client.get('/bootstrap');
+  const renewedRow = afterRenewal.body.data.subscriptions.find(
+    (s) => s.id === renewal.body.data.subscription.id,
+  );
+  const oldRow = afterRenewal.body.data.subscriptions.find((s) => s.id === inForce.id);
+  const meAfter = afterRenewal.body.data.members.find((m) => m.id === memberId);
+
+  check('a term that has not started is scheduled, not active',
+    renewedRow.status === 'scheduled', renewedRow);
+  check('the membership in force is left alone by a future renewal',
+    oldRow.status === 'active', oldRow);
+  check('the member still points at the membership actually covering today',
+    meAfter.currentSubscriptionId === inForce.id,
+    { points: meAfter.currentSubscriptionId, inForce: inForce.id });
+  check('still exactly one active subscription after renewing',
+    afterRenewal.body.data.subscriptions.filter(
+      (s) => s.memberId === memberId && s.status === 'active').length === 1,
+    afterRenewal.body.data.subscriptions
+      .filter((s) => s.memberId === memberId).map((s) => s.status));
+
+  const stacked = await member.client.post('/subscriptions', {
+    planId: inForce.planId,
+    method: 'upi',
+  });
+  check('a second membership cannot be stacked on top of a queued one',
+    stacked.status === 409 && stacked.body.code === 'SUBSCRIPTION_ALREADY_QUEUED',
+    stacked.body);
+
+  // Clearing the queue: cancelling a term that never started must not touch
+  // the membership the member is actually holding today. (The administrator
+  // signs in properly further down; this is only to reach the cancel route.)
+  const office = await signIn('revathi@aarambam.org');
+  const dropQueued = await office.client.patch(`/subscriptions/${renewedRow.id}/cancel`);
+  check('an administrator can cancel a queued membership', dropQueued.status === 200, dropQueued.body);
+
+  const afterDrop = await member.client.get('/bootstrap');
+  const meAfterDrop = afterDrop.body.data.members.find((m) => m.id === memberId);
+  check('cancelling a queued term leaves the member active',
+    meAfterDrop.status === 'active' && meAfterDrop.currentSubscriptionId === inForce.id,
+    { status: meAfterDrop.status, current: meAfterDrop.currentSubscriptionId });
+
+  const cheaper = afterDrop.body.data.plans
+    .filter((p) => p.active && p.price < inForcePlan.price)
+    .sort((a, b) => a.price - b.price)[0];
+
+  if (cheaper) {
+    const downgrade = await member.client.post('/subscriptions', {
+      planId: cheaper.id,
+      method: 'upi',
+    });
+    check('moving to a cheaper plan is recognised as a downgrade',
+      downgrade.status === 201 && downgrade.body.data.subscription.kind === 'downgrade',
+      downgrade.body?.data?.subscription);
+    check('a downgrade waits for the dearer term to finish, so nothing paid for is lost',
+      downgrade.body.data.subscription.startDate === dayAfter(inForce.endDate),
+      { start: downgrade.body?.data?.subscription?.startDate, currentEnd: inForce.endDate });
+    check('a downgrade is charged the cheaper plan in full, not a difference',
+      downgrade.body.data.subscription.amount === cheaper.price,
+      { amount: downgrade.body?.data?.subscription?.amount, price: cheaper.price });
+
+    const downSettled = await member.client.post(
+      `/payments/${downgrade.body.data.payment.id}/settle`, { outcome: 'successful' });
+    check('the downgrade settles as a scheduled term',
+      downSettled.status === 200 &&
+      downSettled.body.data.status === 'successful', downSettled.body);
+
+    const afterDown = await member.client.get('/bootstrap');
+    const downRow = afterDown.body.data.subscriptions.find(
+      (s) => s.id === downgrade.body.data.subscription.id);
+    check('the cheaper plan is queued rather than taking effect immediately',
+      downRow.status === 'scheduled', downRow);
+    check('the dearer membership keeps running until its end date',
+      afterDown.body.data.subscriptions.find((s) => s.id === inForce.id).status === 'active',
+      afterDown.body.data.subscriptions.find((s) => s.id === inForce.id));
+  }
 
   /* ========================================================== organizer */
 
@@ -472,6 +596,83 @@ try {
       admit.status === 200 && admit.body.data.attendance === 'attended' && admit.body.data.checkedInAt,
       admit.body?.data);
   }
+
+  /* ---------------- an event that is not running has no door ------------- */
+
+  const futureDay = new Date(Date.now() + 86_400_000 * 30).toISOString().slice(0, 10);
+  const draft = await organizer.client.post('/events', {
+    title: 'Draft — not for the public yet',
+    categoryId: od.categories[0].id,
+    date: futureDay,
+    startTime: '10:00',
+    endTime: '13:00',
+    registrationOpensAt: new Date().toISOString(),
+    registrationClosesAt: new Date(Date.now() + 86_400_000 * 29).toISOString(),
+    capacity: 20,
+    type: 'free',
+    organizerId: organizer.res.body.data.user.id,
+    lifecycle: 'draft',
+  });
+  check('an organizer can draft a future event', draft.status === 201, draft.body);
+
+  if (draft.status === 201 && doorList) {
+    const earlyScan = await organizer.client.post('/registrations/check-in', {
+      eventId: draft.body.data.id,
+      code: doorList.ticketCode,
+    });
+    // The ticket belongs to another event, so wrong_event is also a refusal —
+    // what matters is that it is never reported as admissible.
+    check('a ticket cannot be checked in against an unpublished event',
+      earlyScan.body.data.kind !== 'valid', earlyScan.body?.data?.kind);
+  }
+
+  /* ---------------- an event in the past cannot be created -------------- */
+
+  const yesterday = new Date(Date.now() - 86_400_000 * 2).toISOString().slice(0, 10);
+  const backdated = await organizer.client.post('/events', {
+    title: 'An event that already happened',
+    categoryId: od.categories[0].id,
+    date: yesterday,
+    startTime: '10:00',
+    endTime: '13:00',
+    registrationOpensAt: new Date(Date.now() - 86_400_000 * 5).toISOString(),
+    registrationClosesAt: new Date(Date.now() - 86_400_000 * 3).toISOString(),
+    capacity: 20,
+    type: 'free',
+    organizerId: organizer.res.body.data.user.id,
+    lifecycle: 'draft',
+  });
+  check('an event cannot be created in the past', backdated.status === 422, backdated.body);
+
+  const lateClose = await organizer.client.post('/events', {
+    title: 'Registration closing after the event',
+    categoryId: od.categories[0].id,
+    date: futureDay,
+    startTime: '10:00',
+    endTime: '13:00',
+    registrationOpensAt: new Date().toISOString(),
+    registrationClosesAt: new Date(Date.now() + 86_400_000 * 60).toISOString(),
+    capacity: 20,
+    type: 'free',
+    organizerId: organizer.res.body.data.user.id,
+    lifecycle: 'draft',
+  });
+  check('registration cannot stay open past the event date', lateClose.status === 422, lateClose.body);
+
+  const backwards = await organizer.client.post('/events', {
+    title: 'Ends before it starts',
+    categoryId: od.categories[0].id,
+    date: futureDay,
+    startTime: '15:00',
+    endTime: '09:00',
+    registrationOpensAt: new Date().toISOString(),
+    registrationClosesAt: new Date(Date.now() + 86_400_000 * 29).toISOString(),
+    capacity: 20,
+    type: 'free',
+    organizerId: organizer.res.body.data.user.id,
+    lifecycle: 'draft',
+  });
+  check('an event cannot end before it starts', backwards.status === 422, backwards.body);
 
   const otherEvent = od.events.find((e) => !ownEventIds.has(e.id));
   const trespass = await organizer.client.patch(`/events/${otherEvent.id}`, { title: 'Hijacked' });
@@ -740,6 +941,45 @@ try {
       !twoMembers.some((t) => t.id === m.id)).id,
   });
   check('a sold-out event refuses further bookings', soldOut.status === 409, soldOut.body);
+
+  /* The member holding the last seat must still be able to get back to their
+     own payment. Their hold is part of the seat count, so the event reads as
+     sold out to them too — which used to lock them out of finishing the
+     payment they had already begun, leaving it pending indefinitely. */
+  const paidTiny = await admin.client.post('/events', {
+    title: `Single Paid Seat ${Date.now()}`,
+    summary: 'One seat only.', description: 'One seat only.',
+    categoryId: category.id, venueName: 'Hall', venueAddress: 'Somewhere', city: 'Chennai',
+    date: new Date(Date.now() + 10 * 86_400_000).toISOString().slice(0, 10),
+    startTime: '10:00', endTime: '12:00',
+    registrationOpensAt: new Date(Date.now() - 86_400_000).toISOString(),
+    registrationClosesAt: new Date(Date.now() + 9 * 86_400_000).toISOString(),
+    capacity: 1, type: 'paid', memberPrice: 250, nonMemberPrice: 400,
+    organizerId: organizerUser.id, lifecycle: 'published',
+  });
+
+  const soloMember = ad.members.find(
+    (m) => m.status === 'active' && !twoMembers.some((t) => t.id === m.id),
+  );
+  const held = await admin.client.post('/registrations', {
+    eventId: paidTiny.body.data.id, memberId: soloMember.id, method: 'upi',
+  });
+  check('the last seat on a paid event can be held', held.status === 201, held.body);
+
+  const resumed = await admin.client.post('/registrations', {
+    eventId: paidTiny.body.data.id, memberId: soloMember.id, method: 'upi',
+  });
+  check('the holder of the last seat can return to their own payment',
+    resumed.status === 201 &&
+    resumed.body.data.registration.id === held.body.data.registration.id &&
+    resumed.body.data.payment.id === held.body.data.payment.id,
+    { status: resumed.status, message: resumed.body?.message });
+
+  const resumedSettle = await admin.client.post(
+    `/payments/${held.body.data.payment.id}/settle`, { outcome: 'successful' });
+  check('that payment then settles and confirms the seat',
+    resumedSettle.status === 200 && resumedSettle.body.data.status === 'successful',
+    resumedSettle.body);
 
   const badUuid = await admin.client.get('/events/../../etc/passwd');
   check('a traversal-shaped path does not resolve an event',

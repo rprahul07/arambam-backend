@@ -3,6 +3,7 @@ import { queryAll, query } from '../database/index.js';
 import env from '../config/env.js';
 import { RENEWAL_WINDOW_DAYS } from '../config/constants.js';
 import { releaseExpiredHolds } from '../modules/registrations/registrations.service.js';
+import { releaseAbandonedPurchases } from '../modules/subscriptions/subscriptions.js';
 import { pushMany } from '../services/notification.service.js';
 import { sendTemplate } from '../services/email.service.js';
 import logger from '../utils/logger.js';
@@ -17,10 +18,13 @@ import logger from '../utils/logger.js';
 
 const tasks = [];
 
-/** Frees seats whose payment never completed. */
+/** Frees seats, and closes memberships, whose payment never completed. */
 const holdSweep = async () => {
   const released = await releaseExpiredHolds();
   if (released) logger.info(`Seat sweep released ${released} holds`);
+
+  const abandoned = await releaseAbandonedPurchases();
+  if (abandoned) logger.info(`Closed ${abandoned} abandoned membership purchases`);
 };
 
 /** Moves finished events and lapsed memberships into their end state. */
@@ -38,18 +42,50 @@ const lapseSweep = async () => {
      RETURNING id, member_id`,
   );
 
+  // A term that has come round is promoted before anyone is marked lapsed, so
+  // a member who renewed early never spends an hour reading as expired.
+  const promoted = await query(
+    `UPDATE subscriptions SET status = 'active'
+     WHERE status = 'scheduled'
+       AND start_date <= CURRENT_DATE
+       AND end_date >= CURRENT_DATE
+       AND NOT EXISTS (
+         SELECT 1 FROM subscriptions other
+         WHERE other.member_id = subscriptions.member_id
+           AND other.status = 'active'
+           AND other.end_date >= CURRENT_DATE
+       )
+     RETURNING id, member_id`,
+  );
+
+  if (promoted.rowCount) {
+    await query(
+      `UPDATE members m SET status = 'active', current_subscription_id = s.id
+       FROM subscriptions s
+       WHERE s.member_id = m.id AND s.status = 'active' AND s.end_date >= CURRENT_DATE
+         AND (m.current_subscription_id IS DISTINCT FROM s.id)`,
+    );
+  }
+
+  // Only members with nothing left to run are lapsed.
   if (subscriptions.rowCount) {
     await query(
-      `UPDATE members SET status = 'expired'
-       WHERE status = 'active'
-         AND current_subscription_id IN (
-           SELECT id FROM subscriptions WHERE status = 'expired' AND end_date < CURRENT_DATE
+      `UPDATE members m SET status = 'expired', current_subscription_id = NULL
+       WHERE m.status = 'active'
+         AND NOT EXISTS (
+           SELECT 1 FROM subscriptions s
+           WHERE s.member_id = m.id
+             AND s.status IN ('active','scheduled')
+             AND s.end_date >= CURRENT_DATE
          )`,
     );
   }
 
-  if (events.rowCount || subscriptions.rowCount) {
-    logger.info(`Lapse sweep: ${events.rowCount} events completed, ${subscriptions.rowCount} memberships expired`);
+  if (events.rowCount || subscriptions.rowCount || promoted.rowCount) {
+    logger.info(
+      `Lapse sweep: ${events.rowCount} events completed, ${subscriptions.rowCount} memberships expired, ` +
+        `${promoted.rowCount} promoted from scheduled`,
+    );
   }
 };
 
@@ -63,7 +99,12 @@ const renewalReminders = async () => {
      JOIN membership_plans p  ON p.id = s.plan_id
      WHERE s.status = 'active'
        AND s.end_date BETWEEN CURRENT_DATE AND (CURRENT_DATE + $1::int)
-       AND s.reminder_sent_at IS NULL`,
+       AND s.reminder_sent_at IS NULL
+       -- Nobody who has already renewed should be told to renew.
+       AND NOT EXISTS (
+         SELECT 1 FROM subscriptions queued
+         WHERE queued.member_id = s.member_id AND queued.status = 'scheduled'
+       )`,
     [RENEWAL_WINDOW_DAYS],
   );
   if (!rows.length) return;

@@ -53,6 +53,12 @@ const base = {
   coverImageUrl: z.string().trim().url().max(500).optional(),
 };
 
+/** The moment an event begins, from its calendar date and its start time. */
+const startsAt = (v) => Date.parse(`${v.date}T${v.startTime ?? '00:00'}:00`);
+
+/** The end of the day the event falls on, in the server's own zone. */
+const endOfEventDay = (v) => Date.parse(`${v.date}T23:59:59`);
+
 /**
  * The window has to close after it opens, and a free event cannot carry a
  * price. Both are also database constraints — this layer exists so the person
@@ -70,9 +76,38 @@ const coherent = (schema) =>
     .refine(
       (v) => v.type !== 'free' || ((v.memberPrice ?? 0) === 0 && (v.nonMemberPrice ?? 0) === 0),
       { path: ['memberPrice'], message: 'A free event cannot have a price' },
+    )
+    .refine(
+      (v) => v.date === undefined || v.startTime === undefined || v.endTime === undefined ||
+        v.endTime > v.startTime,
+      { path: ['endTime'], message: 'The event has to end after it starts' },
+    )
+    /* Registration that is still open after the event has started sells seats
+       to something already under way. This was only caught on the member's
+       side, where the event simply read as over. */
+    .refine(
+      (v) =>
+        v.date === undefined || v.registrationClosesAt === undefined ||
+        Date.parse(v.registrationClosesAt) <= endOfEventDay(v),
+      {
+        path: ['registrationClosesAt'],
+        message: 'Registration must close by the day the event takes place',
+      },
     );
 
-export const createEventSchema = coherent(z.object({ ...base, id: clientId }));
+/**
+ * A new event cannot be in the past.
+ *
+ * Only applied on creation: an existing event's date is left alone so that a
+ * past event can still be corrected or cancelled after the fact.
+ */
+const notInThePast = (schema) =>
+  schema.refine((v) => v.date === undefined || startsAt(v) >= Date.now() - 60_000, {
+    path: ['date'],
+    message: 'That date has already passed — choose a date in the future',
+  });
+
+export const createEventSchema = notInThePast(coherent(z.object({ ...base, id: clientId })));
 
 export const updateEventSchema = coherent(
   z.object(Object.fromEntries(Object.entries(base).map(([key, value]) => [key, value.optional()]))),

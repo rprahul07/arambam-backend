@@ -189,9 +189,14 @@ CREATE TABLE IF NOT EXISTS subscriptions (
   start_date  date NOT NULL,
   end_date    date NOT NULL,
   amount      numeric(10,2) NOT NULL DEFAULT 0 CHECK (amount >= 0),
+  -- 'scheduled' is paid for but not yet in force: an early renewal, or a
+  -- downgrade that takes effect when the current term ends. Keeping it
+  -- distinct from 'active' is what stops a future term from being treated as
+  -- the membership in force.
   status      text NOT NULL DEFAULT 'pending'
-                CHECK (status IN ('active','expired','cancelled','pending')),
-  kind        text NOT NULL DEFAULT 'new' CHECK (kind IN ('new','renewal','upgrade')),
+                CHECK (status IN ('active','scheduled','expired','cancelled','pending')),
+  kind        text NOT NULL DEFAULT 'new'
+                CHECK (kind IN ('new','renewal','upgrade','downgrade')),
   payment_id  uuid,
   created_at  timestamptz NOT NULL DEFAULT now(),
   updated_at  timestamptz NOT NULL DEFAULT now(),
@@ -217,6 +222,75 @@ BEGIN
       FOREIGN KEY (current_subscription_id) REFERENCES subscriptions(id) ON DELETE SET NULL;
   END IF;
 END $$;
+
+-- The CREATE TABLE above only runs on a fresh database, so widening the
+-- vocabulary has to be stated separately for one that already exists.
+DO $$
+BEGIN
+  ALTER TABLE subscriptions DROP CONSTRAINT IF EXISTS subscriptions_status_check;
+  ALTER TABLE subscriptions ADD  CONSTRAINT subscriptions_status_check
+    CHECK (status IN ('active','scheduled','expired','cancelled','pending'));
+
+  ALTER TABLE subscriptions DROP CONSTRAINT IF EXISTS subscriptions_kind_check;
+  ALTER TABLE subscriptions ADD  CONSTRAINT subscriptions_kind_check
+    CHECK (kind IN ('new','renewal','upgrade','downgrade'));
+END $$;
+
+-- Rows written before the rule below existed may already break it: stacking
+-- was possible, so a member can hold several 'active' subscriptions at once.
+-- They are sorted out here, or the unique indexes cannot be created.
+--
+-- Nobody loses coverage: a term already finished becomes history, a term not
+-- yet begun becomes 'scheduled', and where several still overlap the one
+-- running longest is kept — it covers every day the others did.
+DO $$
+DECLARE
+  repaired integer;
+BEGIN
+  UPDATE subscriptions SET status = 'expired'
+   WHERE status = 'active' AND end_date < CURRENT_DATE;
+
+  UPDATE subscriptions SET status = 'scheduled'
+   WHERE status = 'active' AND start_date > CURRENT_DATE;
+
+  WITH ranked AS (
+    SELECT id, row_number() OVER (
+             PARTITION BY member_id ORDER BY end_date DESC, created_at DESC, id
+           ) AS seq
+      FROM subscriptions WHERE status = 'active'
+  )
+  UPDATE subscriptions s SET status = 'expired'
+    FROM ranked WHERE ranked.id = s.id AND ranked.seq > 1;
+  GET DIAGNOSTICS repaired = ROW_COUNT;
+  IF repaired > 0 THEN
+    RAISE NOTICE 'Superseded % overlapping active subscription(s)', repaired;
+  END IF;
+
+  WITH ranked AS (
+    SELECT id, row_number() OVER (
+             PARTITION BY member_id ORDER BY start_date, created_at, id
+           ) AS seq
+      FROM subscriptions WHERE status = 'scheduled'
+  )
+  UPDATE subscriptions s SET status = 'expired'
+    FROM ranked WHERE ranked.id = s.id AND ranked.seq > 1;
+  GET DIAGNOSTICS repaired = ROW_COUNT;
+  IF repaired > 0 THEN
+    RAISE NOTICE 'Superseded % stacked future subscription(s)', repaired;
+  END IF;
+END $$;
+
+-- A member may hold one membership in force and one queued behind it, never
+-- two of either. This is the guarantee the purchase rules rely on; enforcing
+-- it here means a race between two requests cannot produce a stack.
+CREATE UNIQUE INDEX IF NOT EXISTS subscriptions_one_active_idx
+  ON subscriptions (member_id) WHERE status = 'active';
+CREATE UNIQUE INDEX IF NOT EXISTS subscriptions_one_scheduled_idx
+  ON subscriptions (member_id) WHERE status = 'scheduled';
+-- Finding the end of a member's paid-up chain.
+CREATE INDEX IF NOT EXISTS subscriptions_member_end_idx
+  ON subscriptions (member_id, end_date DESC)
+  WHERE status IN ('active','scheduled');
 
 -- ---------------------------------------------------------------------------
 -- EVENT CATEGORIES — drive calendar colour coding and the category chips.

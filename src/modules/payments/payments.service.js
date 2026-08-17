@@ -143,11 +143,33 @@ export async function settle(
     }
 
     /* ------------------------------------------------------ a membership */
+    const booked = await tx.queryOne(`SELECT * FROM subscriptions WHERE id = $1`, [
+      payment.subscription_id,
+    ]);
+
+    // A term that has not begun is paid for but not in force. Calling it
+    // 'active' was what buried the real membership in the history list and
+    // made a queued term look like it had already run its course.
+    const startsLater = String(booked.start_date).slice(0, 10) > new Date().toISOString().slice(0, 10);
     const status = succeeded
-      ? SUBSCRIPTION_STATUS.ACTIVE
+      ? startsLater
+        ? SUBSCRIPTION_STATUS.SCHEDULED
+        : SUBSCRIPTION_STATUS.ACTIVE
       : verified.outcome === PAYMENT_STATUS.PENDING
         ? SUBSCRIPTION_STATUS.PENDING
         : SUBSCRIPTION_STATUS.CANCELLED;
+
+    // The membership being replaced stands down first. A member may hold only
+    // one active subscription — the partial unique index says so — and these
+    // are two statements, so the old one cannot still be active when the new
+    // one arrives.
+    if (succeeded && status === SUBSCRIPTION_STATUS.ACTIVE) {
+      await tx.query(
+        `UPDATE subscriptions SET status = 'expired'
+         WHERE member_id = $1 AND id <> $2 AND status = 'active'`,
+        [booked.member_id, booked.id],
+      );
+    }
 
     const subscription = await tx.queryOne(
       `UPDATE subscriptions SET status = $1 WHERE id = $2 RETURNING *`,
@@ -155,15 +177,9 @@ export async function settle(
     );
     const plan = await tx.queryOne(`SELECT * FROM membership_plans WHERE id = $1`, [subscription.plan_id]);
 
-    if (succeeded) {
-      // Whatever was active becomes history, and the membership the payment
-      // bought becomes the one in force. Doing it in this order means there is
-      // never a moment with two active subscriptions on one member.
-      await tx.query(
-        `UPDATE subscriptions SET status = 'expired'
-         WHERE member_id = $1 AND id <> $2 AND status = 'active'`,
-        [subscription.member_id, subscription.id],
-      );
+    if (succeeded && status === SUBSCRIPTION_STATUS.ACTIVE) {
+      // Only a term that starts today replaces the one in force. A queued term
+      // is left untouched, because it has not had its turn yet.
       await tx.query(
         `UPDATE members SET status = $1, current_subscription_id = $2 WHERE id = $3`,
         [MEMBERSHIP_STATUS.ACTIVE, subscription.id, subscription.member_id],
@@ -178,6 +194,19 @@ export async function settle(
         type: subscription.kind === 'upgrade' ? 'membership_upgraded' : 'membership_activated',
         title: `${plan.name} membership active`,
         body: `Valid until ${formatDay(subscription.end_date)}.`,
+        href: '/member/membership',
+      });
+    }
+
+    if (succeeded && status === SUBSCRIPTION_STATUS.SCHEDULED) {
+      // The membership in force keeps its place; this one waits its turn and
+      // the lapse sweep promotes it on the day it starts.
+      await push({
+        client: tx,
+        userId: member.user_id,
+        type: 'membership_activated',
+        title: `${plan.name} membership confirmed`,
+        body: `It begins on ${formatDay(subscription.start_date)}, when your current membership ends, and runs until ${formatDay(subscription.end_date)}.`,
         href: '/member/membership',
       });
     }
