@@ -14,6 +14,11 @@ const PG_CODES = {
   '23514': (error) => ApiError.unprocessable(checkMessage(error)),
   '22P02': () => ApiError.badRequest('One of the supplied values is not in the expected format'),
   '23502': () => ApiError.badRequest('A required value is missing'),
+  '22021': () => ApiError.badRequest('One of the supplied values contains characters that cannot be stored'),
+  '22001': () => ApiError.badRequest('One of the supplied values is longer than the field allows'),
+  '22003': () => ApiError.badRequest('One of the supplied numbers is out of range'),
+  '22007': () => ApiError.badRequest('One of the supplied dates is not in the expected format'),
+  '22008': () => ApiError.badRequest('One of the supplied dates is out of range'),
 };
 
 const uniqueMessage = (error) => {

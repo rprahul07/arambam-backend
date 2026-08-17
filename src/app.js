@@ -8,6 +8,7 @@ import cookieParser from 'cookie-parser';
 import env from './config/env.js';
 import routes from './modules/index.js';
 import { notFound, errorHandler } from './middleware/error.js';
+import ApiError from './utils/ApiError.js';
 import { globalLimiter } from './middleware/rateLimit.js';
 import { handleWebhook } from './modules/payments/payments.webhook.js';
 import { checkConnection } from './database/index.js';
@@ -81,6 +82,46 @@ app.post(
 
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true, limit: '2mb' }));
+
+/**
+ * Refuses text carrying a null byte.
+ *
+ * Postgres cannot store one in a text column and rejects the whole statement
+ * when it meets one, which surfaces as a failure far from the field that
+ * caused it. Checking the parsed body rather than the raw one matters:
+ * `JSON.stringify` writes a null byte as the six-character escape `\u0000`, so the
+ * bytes on the wire are innocent and the character only exists once the body
+ * has been parsed.
+ */
+const NUL = '\u0000';
+
+function findNullByte(value, path = '') {
+  if (typeof value === 'string') return value.includes(NUL) ? path || 'body' : null;
+  if (Array.isArray(value)) {
+    for (const [index, item] of value.entries()) {
+      const found = findNullByte(item, `${path}[${index}]`);
+      if (found) return found;
+    }
+    return null;
+  }
+  if (value && typeof value === 'object') {
+    for (const [key, item] of Object.entries(value)) {
+      const found = findNullByte(item, path ? `${path}.${key}` : key);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+app.use((req, res, next) => {
+  const field = findNullByte(req.body);
+  if (!field) return next();
+  return next(
+    ApiError.badRequest('That value contains a character which cannot be stored', {
+      [field]: 'Remove the invalid character and try again',
+    }),
+  );
+});
 
 /* -------------------------------------------------------- static uploads */
 
