@@ -1082,6 +1082,50 @@ try {
       facilitatorTriesMembership.status === 403, describe(facilitatorTriesMembership));
   }
 
+  /* An unfinished purchase must never become a dead end: the member closed the
+     payment window, and the next attempt has to go somewhere. */
+  const stuckMember = members[0];
+  const firstTry = await admin.client.post('/subscriptions', {
+    planId: aPlan.id, memberId: stuckMember.id, method: 'qr_upi',
+  });
+  if (firstTry.status === 201) {
+    const resumed = await admin.client.post('/subscriptions', {
+      planId: aPlan.id, memberId: stuckMember.id, method: 'qr_upi',
+    });
+    check('choosing the same plan again resumes the purchase instead of refusing',
+      resumed.status === 201 &&
+      resumed.body.data.payment.id === firstTry.body.data.payment.id,
+      describe(resumed));
+
+    const otherPlan = data.plans.find((p) => p.active && p.id !== aPlan.id);
+    if (otherPlan) {
+      const switched = await admin.client.post('/subscriptions', {
+        planId: otherPlan.id, memberId: stuckMember.id, method: 'qr_upi',
+      });
+      check('choosing a different plan supersedes the unfinished one',
+        switched.status === 201 &&
+        switched.body.data.payment.id !== firstTry.body.data.payment.id,
+        describe(switched));
+
+      const supersededPayment = await db.queryOne(
+        `SELECT status FROM payments WHERE id = $1`, [firstTry.body.data.payment.id]);
+      check('the unfinished payment is stood down, not left pending for ever',
+        supersededPayment.status === 'cancelled', supersededPayment);
+
+      /* Once money is claimed against it, it is real and cannot be brushed
+         aside by picking another plan. */
+      await admin.client.post(`/payments/${switched.body.data.payment.id}/claim`, {
+        reference: `STUCK${Date.now()}`,
+      });
+      const blocked = await admin.client.post('/subscriptions', {
+        planId: aPlan.id, memberId: stuckMember.id, method: 'qr_upi',
+      });
+      check('a claimed payment blocks a new purchase, and says why',
+        blocked.status === 409 && blocked.body.code === 'PURCHASE_AWAITING_VERIFICATION',
+        describe(blocked));
+    }
+  }
+
   /* -- one member cannot read another's things -- */
   const otherMember =
     data.members.find((m) => m.id !== member.user?.memberId && m.status === 'active') ?? aMember;

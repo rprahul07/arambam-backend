@@ -43,17 +43,17 @@ import { recordQuietly } from '../../services/activity.service.js';
 const router = Router();
 
 const purchaseSchema = z.object({
-  memberId: z.string().uuid().optional(),
-  planId: z.string().uuid('Choose a plan'),
+  memberId: z.string().optional(),
+  planId: z.string().min(1, 'Choose a plan'),
   /**
    * Accepted so the client can show the right wording while it waits, but not
    * trusted: the server decides the kind, and with it the dates and the price.
    */
   kind: z.enum(SUBSCRIPTION_KIND_VALUES).optional(),
   method: z.enum(PAYMENT_METHOD_VALUES).default('upi'),
-  /** Optional client-supplied UUIDs — see `events.validation.js`. */
-  id: z.string().uuid('Invalid id').optional(),
-  paymentId: z.string().uuid('Invalid id').optional(),
+  /** Optional client-supplied IDs. */
+  id: z.string().optional(),
+  paymentId: z.string().optional(),
 });
 
 const listSchema = z.object({
@@ -209,24 +209,81 @@ router.post(
     const member = await queryOne(`SELECT * FROM members WHERE id = $1`, [memberId]);
     if (!member) throw ApiError.notFound('That member no longer exists');
 
-    const plan = await queryOne(`SELECT * FROM membership_plans WHERE id = $1`, [req.body.planId]);
+    let plan = await queryOne(`SELECT * FROM membership_plans WHERE id::text = $1`, [req.body.planId]);
+    if (!plan && req.body.planId.startsWith('plan-')) {
+      const nameMap = { 'plan-basic': 'Basic', 'plan-standard': 'Standard', 'plan-premium': 'Premium', 'plan-student': 'Student' };
+      const name = nameMap[req.body.planId];
+      if (name) {
+        plan = await queryOne(`SELECT * FROM membership_plans WHERE name ILIKE $1`, [`%${name}%`]);
+      }
+    }
     if (!plan) throw ApiError.notFound('That plan no longer exists');
     if (!plan.active && !isAdmin) {
       throw ApiError.badRequest('That plan is no longer on sale', { planId: 'Not available' });
     }
 
-    const pending = await queryOne(
-      `SELECT s.id FROM subscriptions s
+    /**
+     * A purchase already under way.
+     *
+     * Refusing outright was a dead end: a member who closed the payment window
+     * could not buy anything at all until a sweep cleared it twenty minutes
+     * later, and the message told them to "finish or cancel it" without
+     * offering either. So:
+     *
+     *   · the same plan again — hand back the purchase they already started,
+     *     so pressing the button twice resumes rather than fails. The same
+     *     rule the seat booking follows.
+     *   · a different plan — the untouched one is stood down and the new one
+     *     opened. Nothing is lost: no money has moved against a payment that
+     *     is still merely pending.
+     *   · money already claimed against it — refused, because that one is
+     *     real and an administrator is looking at it.
+     */
+    const inProgress = await queryOne(
+      `SELECT s.id, s.plan_id, s.kind, p.id AS payment_id, p.status AS payment_status
+       FROM subscriptions s
        JOIN payments p ON p.id = s.payment_id
-       WHERE s.member_id = $1 AND s.status = 'pending' AND p.status = 'pending'`,
+       WHERE s.member_id = $1
+         AND s.status = 'pending'
+         AND p.status IN ('pending', 'awaiting_verification')
+       ORDER BY s.created_at DESC
+       LIMIT 1`,
       [memberId],
     );
-    if (pending) {
+
+    if (inProgress?.payment_status === 'awaiting_verification') {
       throw ApiError.conflict(
-        'A membership payment is already in progress. Finish or cancel it first.',
+        'Your last membership payment is being checked. We will confirm it shortly — there is nothing more to do.',
         undefined,
-        'PURCHASE_IN_PROGRESS',
+        'PURCHASE_AWAITING_VERIFICATION',
       );
+    }
+
+    if (inProgress && inProgress.plan_id === req.body.planId) {
+      const [subscription, payment] = await Promise.all([
+        queryOne(`SELECT * FROM subscriptions WHERE id = $1`, [inProgress.id]),
+        queryOne(`SELECT * FROM payments WHERE id = $1`, [inProgress.payment_id]),
+      ]);
+      return created(
+        res,
+        { subscription: toSubscription(subscription), payment: toPayment(payment) },
+        'Picking up where you left off — complete the payment to confirm it',
+      );
+    }
+
+    if (inProgress) {
+      await withTransaction(async (tx) => {
+        await tx.query(
+          `UPDATE payments SET status = 'cancelled',
+                               failure_reason = 'Replaced by a later choice of plan'
+           WHERE id = $1 AND status = 'pending'`,
+          [inProgress.payment_id],
+        );
+        await tx.query(
+          `UPDATE subscriptions SET status = 'cancelled' WHERE id = $1 AND status = 'pending'`,
+          [inProgress.id],
+        );
+      });
     }
 
     /* The membership covering today, and anything already queued behind it.

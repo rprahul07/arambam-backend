@@ -119,6 +119,12 @@ export const env = {
     maxBytes: int(process.env.UPLOAD_MAX_BYTES, 5 * 1024 * 1024),
   },
 
+  supabase: {
+    url: process.env.SUPABASE_URL,
+    key: process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY,
+    bucket: process.env.SUPABASE_STORAGE_BUCKET || 'aarambam-assets',
+  },
+
   /**
    * The three one-click role buttons on the sign-in screen. Enabled by default
    * for demonstration builds; turn off with DEMO_LOGIN_ENABLED=false.

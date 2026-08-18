@@ -38,7 +38,7 @@ const organisationSchema = z.object({
      Changing it here changes it everywhere, immediately — which is why only
      an administrator may. */
   paymentUpiId: z.string().trim().max(120).default(''),
-  paymentQrUrl: z.union([z.literal(''), z.string().url('That does not look like a link')]).default(''),
+  paymentQrUrl: z.string().trim().max(500).default(''),
   paymentInstructions: z.string().trim().max(1000).default(''),
 });
 

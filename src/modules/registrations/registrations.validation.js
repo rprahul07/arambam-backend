@@ -6,13 +6,13 @@ import {
 } from '../../config/constants.js';
 
 export const createRegistrationSchema = z.object({
-  eventId: z.string().uuid('Choose an event'),
+  eventId: z.string().min(1, 'Choose an event'),
   /** Administrators may book on someone's behalf; a member may only book themselves. */
-  memberId: z.string().uuid().optional(),
+  memberId: z.string().optional(),
   method: z.enum(PAYMENT_METHOD_VALUES).default('upi'),
-  /** Optional client-supplied UUIDs — see `events.validation.js`. */
-  id: z.string().uuid('Invalid id').optional(),
-  paymentId: z.string().uuid('Invalid id').optional(),
+  /** Optional client-supplied IDs. */
+  id: z.string().optional(),
+  paymentId: z.string().optional(),
 });
 
 export const cancelSchema = z.object({

@@ -31,7 +31,8 @@ ensure(UPLOAD_DIR);
 
 const storage = multer.diskStorage({
   destination(req, file, cb) {
-    const kind = req.uploadKind === 'member' ? 'members' : 'events';
+    const map = { member: 'members', event: 'events', qr: 'qr', proof: 'proofs' };
+    const kind = map[req.uploadKind] || 'events';
     cb(null, ensure(path.join(UPLOAD_DIR, kind)));
   },
   filename(req, file, cb) {

@@ -353,6 +353,9 @@ export const toOrganisation = (value) => ({
   email: value?.email ?? '',
   phone: value?.phone ?? '',
   website: value?.website ?? '',
+  paymentUpiId: value?.paymentUpiId ?? '',
+  paymentQrUrl: value?.paymentQrUrl ?? '',
+  paymentInstructions: value?.paymentInstructions ?? '',
 });
 
 export const toEmailTemplate = (row) =>

@@ -527,47 +527,49 @@ END $$;
 
 -- Paying outside the system: the columns above only appear on a fresh
 -- database, so an existing one is brought up to the same shape here.
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS claim_reference  text;
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS claim_note       text;
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS payer_pan        text;
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS claim_proof_url  text;
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS claimed_at       timestamptz;
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS verified_by      uuid;
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS verified_at      timestamptz;
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS rejection_reason text;
+
+ALTER TABLE payments DROP CONSTRAINT IF EXISTS payments_status_check;
+ALTER TABLE payments ADD  CONSTRAINT payments_status_check
+  CHECK (status IN ('successful','pending','awaiting_verification','failed','cancelled'));
+
+ALTER TABLE payments DROP CONSTRAINT IF EXISTS payments_method_check;
+ALTER TABLE payments ADD  CONSTRAINT payments_method_check
+  CHECK (method IN ('upi','card','netbanking','wallet','qr_upi'));
+
+ALTER TABLE payments DROP CONSTRAINT IF EXISTS payments_claim_has_reference;
+ALTER TABLE payments ADD  CONSTRAINT payments_claim_has_reference
+  CHECK (status <> 'awaiting_verification' OR claim_reference IS NOT NULL);
+
 DO $$
 BEGIN
-  ALTER TABLE payments ADD COLUMN IF NOT EXISTS claim_reference  text;
-  ALTER TABLE payments ADD COLUMN IF NOT EXISTS claim_note       text;
-  ALTER TABLE payments ADD COLUMN IF NOT EXISTS payer_pan        text;
-  ALTER TABLE payments ADD COLUMN IF NOT EXISTS claim_proof_url  text;
-  ALTER TABLE payments ADD COLUMN IF NOT EXISTS claimed_at       timestamptz;
-  ALTER TABLE payments ADD COLUMN IF NOT EXISTS verified_by      uuid;
-  ALTER TABLE payments ADD COLUMN IF NOT EXISTS verified_at      timestamptz;
-  ALTER TABLE payments ADD COLUMN IF NOT EXISTS rejection_reason text;
-
-  ALTER TABLE payments DROP CONSTRAINT IF EXISTS payments_status_check;
-  ALTER TABLE payments ADD  CONSTRAINT payments_status_check
-    CHECK (status IN ('successful','pending','awaiting_verification','failed','cancelled'));
-
-  ALTER TABLE payments DROP CONSTRAINT IF EXISTS payments_method_check;
-  ALTER TABLE payments ADD  CONSTRAINT payments_method_check
-    CHECK (method IN ('upi','card','netbanking','wallet','qr_upi'));
-
-  ALTER TABLE payments DROP CONSTRAINT IF EXISTS payments_claim_has_reference;
-  ALTER TABLE payments ADD  CONSTRAINT payments_claim_has_reference
-    CHECK (status <> 'awaiting_verification' OR claim_reference IS NOT NULL);
-
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'payments_verified_by_fk') THEN
     ALTER TABLE payments ADD CONSTRAINT payments_verified_by_fk
       FOREIGN KEY (verified_by) REFERENCES users(id) ON DELETE SET NULL;
   END IF;
-
-  -- Where the money for an event is collected. Only an administrator may set
-  -- it, and it is recorded on the event so a reconciliation years later can
-  -- still say which account took the money.
-  ALTER TABLE events ADD COLUMN IF NOT EXISTS payment_qr_url text;
-  ALTER TABLE events ADD COLUMN IF NOT EXISTS payment_qr_mode text NOT NULL DEFAULT 'trust';
-  ALTER TABLE events DROP CONSTRAINT IF EXISTS events_qr_mode_check;
-  ALTER TABLE events ADD  CONSTRAINT events_qr_mode_check
-    CHECK (payment_qr_mode IN ('trust','own'));
-  -- Choosing your own QR means supplying one.
-  ALTER TABLE events DROP CONSTRAINT IF EXISTS events_own_qr_has_url;
-  ALTER TABLE events ADD  CONSTRAINT events_own_qr_has_url
-    CHECK (payment_qr_mode <> 'own' OR payment_qr_url IS NOT NULL);
 END $$;
+
+-- Where the money for an event is collected. Only an administrator may set
+-- it, and it is recorded on the event so a reconciliation years later can
+-- still say which account took the money.
+ALTER TABLE events ADD COLUMN IF NOT EXISTS payment_qr_url text;
+ALTER TABLE events ADD COLUMN IF NOT EXISTS payment_qr_mode text NOT NULL DEFAULT 'trust';
+
+ALTER TABLE events DROP CONSTRAINT IF EXISTS events_qr_mode_check;
+ALTER TABLE events ADD  CONSTRAINT events_qr_mode_check
+  CHECK (payment_qr_mode IN ('trust','own'));
+
+-- Choosing your own QR means supplying one.
+ALTER TABLE events DROP CONSTRAINT IF EXISTS events_own_qr_has_url;
+ALTER TABLE events ADD  CONSTRAINT events_own_qr_has_url
+  CHECK (payment_qr_mode <> 'own' OR payment_qr_url IS NOT NULL);
 
 CREATE INDEX IF NOT EXISTS payments_awaiting_idx ON payments (claimed_at)
   WHERE status = 'awaiting_verification';

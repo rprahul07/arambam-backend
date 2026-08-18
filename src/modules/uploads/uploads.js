@@ -5,17 +5,25 @@ import { created } from '../../utils/response.js';
 import { authenticate, staffOnly } from '../../middleware/auth.js';
 import { uploadImage, publicUrl } from '../../middleware/upload.js';
 import { writeLimiter } from '../../middleware/rateLimit.js';
-
-/**
- * POST /uploads/event-cover
- *
- * Stores an image and hands back its public URL, which the caller then saves
- * onto the event. Keeping the two steps apart means a half-finished event form
- * never leaves an orphaned reference on a record.
- */
+import { uploadToSupabase } from '../../services/storage.service.js';
 
 const router = Router();
 
+async function handleUpload(req, res, folderName) {
+  if (!req.file) throw ApiError.badRequest('Choose an image to upload');
+  
+  // Try Supabase Storage first, fallback to local URL
+  const supabaseUrl = await uploadToSupabase(req.file, folderName);
+  const finalUrl = supabaseUrl || publicUrl(req.file);
+
+  return created(
+    res,
+    { url: finalUrl, bytes: req.file.size, mimeType: req.file.mimetype },
+    'Image uploaded successfully',
+  );
+}
+
+/** POST /uploads/event-cover */
 router.post(
   '/event-cover',
   authenticate,
@@ -23,12 +31,30 @@ router.post(
   writeLimiter,
   ...uploadImage('event'),
   asyncHandler(async (req, res) => {
-    if (!req.file) throw ApiError.badRequest('Choose an image to upload');
-    return created(
-      res,
-      { url: publicUrl(req.file), bytes: req.file.size, mimeType: req.file.mimetype },
-      'Image uploaded',
-    );
+    return handleUpload(req, res, 'event-covers');
+  }),
+);
+
+/** POST /uploads/qr-code */
+router.post(
+  '/qr-code',
+  authenticate,
+  staffOnly,
+  writeLimiter,
+  ...uploadImage('qr'),
+  asyncHandler(async (req, res) => {
+    return handleUpload(req, res, 'qr-codes');
+  }),
+);
+
+/** POST /uploads/payment-proof */
+router.post(
+  '/payment-proof',
+  authenticate,
+  writeLimiter,
+  ...uploadImage('proof'),
+  asyncHandler(async (req, res) => {
+    return handleUpload(req, res, 'payment-proofs');
   }),
 );
 
