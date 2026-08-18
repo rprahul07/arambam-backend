@@ -1,6 +1,8 @@
-import { queryOne, withTransaction } from '../../database/index.js';
+import { queryAll, queryOne, withTransaction } from '../../database/index.js';
 import {
+  EVENT_QR_MODE,
   OFFLINE_PAYMENT_METHODS,
+  ROLES,
   PAYMENT_STATUS,
   REGISTRATION_STATUS,
   SUBSCRIPTION_STATUS,
@@ -33,6 +35,36 @@ import { settle } from './payments.service.js';
  *   · who approved what, and when, is written to the activity log
  */
 
+/**
+ * Who may rule on a claim.
+ *
+ * An administrator may rule on anything. A facilitator may rule only on money
+ * for an event they run — which is also the only money they can be expected to
+ * recognise on a statement. Membership income is never theirs to confirm.
+ *
+ * Worth naming the trade-off this accepts: a facilitator has an interest in
+ * their own event filling up, and here they are the one confirming that it
+ * has. What holds it honest is that the decision is attributable — every
+ * approval carries who made it — and that the reference behind it can be
+ * checked against the account afterwards.
+ */
+async function assertMayRule(actor, payment) {
+  if (actor.role === ROLES.ADMIN) return;
+  if (actor.role !== ROLES.ORGANIZER) throw ApiError.forbidden('Only staff can do that');
+
+  if (!payment.registration_id) {
+    throw ApiError.forbidden('Membership payments are confirmed by the office');
+  }
+
+  const owns = await queryOne(
+    `SELECT 1 FROM registrations r
+     JOIN events e ON e.id = r.event_id
+     WHERE r.id = $1 AND e.organizer_id = $2`,
+    [payment.registration_id, actor.id],
+  );
+  if (!owns) throw ApiError.forbidden('You can only confirm payments for your own events');
+}
+
 export const isOffline = (method) => OFFLINE_PAYMENT_METHODS.includes(method);
 
 /** Normalised for comparison: banks are inconsistent about case and spacing. */
@@ -44,7 +76,7 @@ const normaliseReference = (value) => value.trim().replace(/\s+/g, '').toUpperCa
  * Moves the payment to `awaiting_verification`. It confirms nothing: the seat
  * stays held and the membership stays pending until an administrator agrees.
  */
-export async function claim({ paymentId, reference, note, proofUrl }, actor) {
+export async function claim({ paymentId, reference, note, proofUrl, pan }, actor) {
   const payment = await queryOne(`SELECT * FROM payments WHERE id = $1`, [paymentId]);
   if (!payment) throw ApiError.notFound('That payment no longer exists');
 
@@ -85,11 +117,19 @@ export async function claim({ paymentId, reference, note, proofUrl }, actor) {
          claim_reference = $2,
          claim_note = $3,
          claim_proof_url = $4,
+         payer_pan = COALESCE($5, payer_pan),
          claimed_at = now(),
          rejection_reason = NULL
-     WHERE id = $5
+     WHERE id = $6
      RETURNING *`,
-    [PAYMENT_STATUS.AWAITING_VERIFICATION, normalised, note ?? null, proofUrl ?? null, paymentId],
+    [
+      PAYMENT_STATUS.AWAITING_VERIFICATION,
+      normalised,
+      note ?? null,
+      proofUrl ?? null,
+      pan ? pan.trim().toUpperCase() : null,
+      paymentId,
+    ],
   );
 
   recordQuietly({
@@ -114,6 +154,7 @@ export async function claim({ paymentId, reference, note, proofUrl }, actor) {
 export async function verify({ paymentId, approved, reason }, actor) {
   const payment = await queryOne(`SELECT * FROM payments WHERE id = $1`, [paymentId]);
   if (!payment) throw ApiError.notFound('That payment no longer exists');
+  await assertMayRule(actor, payment);
 
   if (payment.status === PAYMENT_STATUS.SUCCESSFUL) {
     return { payment: toPayment(payment), alreadySettled: true };
@@ -217,8 +258,11 @@ export async function verify({ paymentId, approved, reason }, actor) {
 }
 
 /** The administrator's queue, oldest claim first — nobody waits for ever. */
-export async function pending() {
-  const { queryAll } = await import('../../database/index.js');
+export async function pending(actor) {
+  /* A facilitator sees only their own events' claims, and no membership
+     income at all. An administrator sees the lot. */
+  const mine = actor.role === ROLES.ORGANIZER ? actor.id : null;
+
   const rows = await queryAll(
     `SELECT p.*, m.full_name AS member_name, m.email AS member_email,
             e.title AS event_title, pl.name AS plan_name
@@ -229,8 +273,9 @@ export async function pending() {
      LEFT JOIN subscriptions s    ON s.id = p.subscription_id
      LEFT JOIN membership_plans pl ON pl.id = s.plan_id
      WHERE p.status = $1
+       AND ($2::uuid IS NULL OR e.organizer_id = $2)
      ORDER BY p.claimed_at ASC`,
-    [PAYMENT_STATUS.AWAITING_VERIFICATION],
+    [PAYMENT_STATUS.AWAITING_VERIFICATION, mine],
   );
 
   return rows.map((row) => ({
@@ -241,4 +286,60 @@ export async function pending() {
   }));
 }
 
-export default { claim, verify, pending, isOffline };
+
+/**
+ * What to show someone about to pay.
+ *
+ * Which QR applies is decided here, not by the browser: membership income is
+ * always the Trust's, and an event uses the facilitator's own QR only where
+ * they have chosen that and supplied one. Anything else falls back to the
+ * Trust's, so a half-finished setting can never leave a payer with no way to
+ * pay.
+ */
+export async function instructions(paymentId, actor) {
+  const payment = await queryOne(`SELECT * FROM payments WHERE id = $1`, [paymentId]);
+  if (!payment) throw ApiError.notFound('That payment no longer exists');
+  if (actor.role === ROLES.MEMBER && payment.member_id !== actor.member_id) {
+    throw ApiError.forbidden('That is not your payment');
+  }
+
+  const settings = await queryOne(`SELECT value FROM settings WHERE key = 'organisation'`);
+  const org = settings?.value ?? {};
+
+  let qrUrl = org.paymentQrUrl ?? '';
+  let payeeLabel = org.name ?? 'the Trust';
+  let source = 'trust';
+
+  if (payment.registration_id) {
+    const event = await queryOne(
+      `SELECT e.title, e.payment_qr_mode, e.payment_qr_url
+       FROM registrations r JOIN events e ON e.id = r.event_id
+       WHERE r.id = $1`,
+      [payment.registration_id],
+    );
+    if (event?.payment_qr_mode === EVENT_QR_MODE.OWN && event.payment_qr_url) {
+      qrUrl = event.payment_qr_url;
+      payeeLabel = event.title;
+      source = 'event';
+    }
+  }
+
+  return {
+    paymentId: payment.id,
+    amount: Number(payment.amount),
+    reference: payment.reference,
+    description: payment.description,
+    status: payment.status,
+    qrUrl,
+    upiId: source === 'trust' ? (org.paymentUpiId ?? '') : '',
+    payeeLabel,
+    qrSource: source,
+    instructions: org.paymentInstructions ?? '',
+    /* Asked for before paying, and optional — it only matters to payers who
+       need it on their own records. */
+    panRequested: true,
+    panOptional: true,
+  };
+}
+
+export default { claim, verify, pending, instructions, isOffline };

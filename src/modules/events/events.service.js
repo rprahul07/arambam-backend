@@ -38,6 +38,8 @@ const WRITABLE = {
   nonMemberPrice: 'non_member_price',
   organizerId: 'organizer_id',
   lifecycle: 'lifecycle',
+  paymentQrMode: 'payment_qr_mode',
+  paymentQrUrl: 'payment_qr_url',
 };
 
 export const findById = (id) => queryOne(`SELECT * FROM events WHERE id = $1`, [id]);
@@ -175,9 +177,10 @@ export async function create(input, user) {
     `INSERT INTO events (id, slug, title, summary, description, category_id, cover_image_url,
                          venue_name, venue_address, city, date, start_time, end_time,
                          registration_opens_at, registration_closes_at, capacity, lifecycle,
-                         type, member_price, non_member_price, organizer_id, published_at)
-     VALUES (COALESCE($22::uuid, gen_random_uuid()),
-             $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+                         type, member_price, non_member_price, organizer_id, published_at,
+                         payment_qr_mode, payment_qr_url)
+     VALUES (COALESCE($24::uuid, gen_random_uuid()),
+             $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
      RETURNING *`,
     [
       slug,
@@ -201,6 +204,8 @@ export async function create(input, user) {
       input.type === 'free' ? 0 : input.nonMemberPrice,
       input.organizerId,
       publishedAt,
+      input.paymentQrMode ?? 'trust',
+      input.paymentQrMode === 'own' ? (input.paymentQrUrl || null) : null,
       input.id ?? null,
     ],
   );

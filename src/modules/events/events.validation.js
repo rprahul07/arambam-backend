@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { EVENT_LIFECYCLE_VALUES, EVENT_TYPE_VALUES } from '../../config/constants.js';
+import { EVENT_LIFECYCLE_VALUES, EVENT_QR_MODE_VALUES, EVENT_TYPE_VALUES } from '../../config/constants.js';
 
 const time = z
   .string()
@@ -50,6 +50,10 @@ const base = {
   nonMemberPrice: money.default(0),
   organizerId: z.string().uuid('Choose an organiser'),
   lifecycle: z.enum(EVENT_LIFECYCLE_VALUES).default('draft'),
+  /* Whose QR collects this event's money. Defaults to the Trust's, so an
+     event created without a thought about it still collects correctly. */
+  paymentQrMode: z.enum(EVENT_QR_MODE_VALUES).default('trust'),
+  paymentQrUrl: z.union([z.literal(''), z.string().trim().url().max(500)]).optional(),
   coverImageUrl: z.string().trim().url().max(500).optional(),
 };
 
@@ -83,6 +87,12 @@ const coherent = (schema) =>
       (v) => v.type !== 'free' || ((v.memberPrice ?? 0) === 0 && (v.nonMemberPrice ?? 0) === 0),
       { path: ['memberPrice'], message: 'A free event cannot have a price' },
     )
+    /* Choosing your own QR means supplying one — otherwise the payer is shown
+       nothing to scan. */
+    .refine((v) => v.paymentQrMode !== 'own' || Boolean(v.paymentQrUrl), {
+      path: ['paymentQrUrl'],
+      message: 'Upload the QR you want this event collected on, or use the Trust QR',
+    })
     .refine(
       (v) => v.date === undefined || v.startTime === undefined || v.endTime === undefined ||
         v.endTime > v.startTime,

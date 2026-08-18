@@ -243,6 +243,9 @@ export const toEvent = (row) =>
     nonMemberPrice: num(row.non_member_price),
 
     organizerId: row.organizer_id,
+    /* Whose QR this event's money is collected on. */
+    paymentQrMode: row.payment_qr_mode ?? 'trust',
+    paymentQrUrl: row.payment_qr_url,
     createdAt: iso(row.created_at),
     publishedAt: iso(row.published_at),
     cancellationReason: row.cancellation_reason,
@@ -315,6 +318,7 @@ export const toPayment = (row) =>
        find it on the statement. */
     claimReference: row.claim_reference,
     claimNote: row.claim_note,
+    payerPan: row.payer_pan,
     claimProofUrl: row.claim_proof_url,
     claimedAt: iso(row.claimed_at),
     verifiedAt: iso(row.verified_at),

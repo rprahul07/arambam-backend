@@ -121,14 +121,23 @@ export const PAYMENT_METHOD_VALUES = [
   'card',
   'netbanking',
   'wallet',
-  /** Trust QR, scanned and paid in any UPI app. */
+  /** A QR scanned and paid in any UPI app. */
   'qr_upi',
-  /** SBI Collect, paid on the bank's own hosted page. */
-  'sbi_collect',
 ];
 
-/** Methods settled by an administrator checking a bank statement. */
-export const OFFLINE_PAYMENT_METHODS = ['qr_upi', 'sbi_collect'];
+/** Methods settled by a person checking a bank statement, not a gateway. */
+export const OFFLINE_PAYMENT_METHODS = ['qr_upi'];
+
+/**
+ * Whose QR an event's money is collected on.
+ *
+ *   trust — the Trust's own QR, set in administrator settings
+ *   own   — a QR the facilitator uploaded for this event
+ *
+ * Membership income is never a facilitator's, so it always uses the Trust's.
+ */
+export const EVENT_QR_MODE = { TRUST: 'trust', OWN: 'own' };
+export const EVENT_QR_MODE_VALUES = Object.values(EVENT_QR_MODE);
 
 /**
  * How long a seat or membership is held while a payment made outside the

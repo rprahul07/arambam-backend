@@ -33,14 +33,12 @@ const organisationSchema = z.object({
   phone: z.string().trim().max(40).default(''),
   website: z.string().trim().max(120).default(''),
 
-  /* How the Trust takes money. Shown to a payer at the point of paying, so
-     the numbers here are the ones that end up on a bank statement — which is
-     why only an administrator may edit them. */
+  /* The Trust's QR, shown to anyone paying for a membership and to anyone
+     paying for an event the facilitator has not supplied their own QR for.
+     Changing it here changes it everywhere, immediately — which is why only
+     an administrator may. */
   paymentUpiId: z.string().trim().max(120).default(''),
   paymentQrUrl: z.union([z.literal(''), z.string().url('That does not look like a link')]).default(''),
-  sbiCollectUrl: z
-    .union([z.literal(''), z.string().url('That does not look like a link')])
-    .default('https://onlinesbi.sbi.bank.in/sbicollect/icollecthome.htm?corpID=5913215'),
   paymentInstructions: z.string().trim().max(1000).default(''),
 });
 

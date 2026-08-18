@@ -841,6 +841,23 @@ try {
       booking.body.data.registration.status === 'pending_payment',
       booking.body?.data?.registration?.status);
 
+    /* What the payer is shown before paying: which QR, how much, and the
+       reference to quote. */
+    const inst = await member.client.get(`/payments/${offlinePaymentId}/instructions`);
+    check('a payer is told which QR to pay and how much',
+      inst.status === 200 && inst.body.data.amount > 0 && Boolean(inst.body.data.reference),
+      { status: inst.status, amount: inst.body?.data?.amount, source: inst.body?.data?.qrSource });
+    check('an event with no QR of its own falls back to the Trust QR',
+      inst.body?.data?.qrSource === 'trust', inst.body?.data?.qrSource);
+    check('PAN is asked for but never insisted on',
+      inst.body?.data?.panRequested === true && inst.body?.data?.panOptional === true,
+      inst.body?.data);
+
+    const strangersInstructions = await organizer.client.get(
+      `/payments/${offlinePaymentId}/instructions`);
+    check('staff can read the instructions too', strangersInstructions.status === 200,
+      describe(strangersInstructions));
+
     /* The whole point: a payer cannot confirm their own payment. */
     const selfSettle = await member.client.post(`/payments/${offlinePaymentId}/settle`, {
       outcome: 'successful',
@@ -860,20 +877,56 @@ try {
     });
     check('a member cannot verify their own payment', selfVerify.status === 403, describe(selfVerify));
 
-    const organizerVerify = await organizer.client.post(`/payments/${offlinePaymentId}/verify`, {
-      approved: true,
+    /* The event above belongs to `organizer`, so they may rule on its money —
+       and only its money. A facilitator confirming another facilitator's
+       event, or any membership income, is refused. */
+    const strangerEvent = await admin.client.post('/events', {
+      ...validEvent,
+      title: `Someone else's event ${Date.now()}`,
+      type: 'paid',
+      memberPrice: 100,
+      nonMemberPrice: 100,
+      lifecycle: 'published',
+      organizerId: admin.user.id,
+      registrationOpensAt: new Date(Date.now() - 86_400_000).toISOString(),
     });
-    check('an organizer cannot verify a payment either',
-      organizerVerify.status === 403, describe(organizerVerify));
+    const strangerBooking = await admin.client.post('/registrations', {
+      eventId: strangerEvent.body?.data?.id, memberId: members[2].id, method: 'qr_upi',
+    });
+    if (strangerBooking.status === 201 && strangerBooking.body.data.payment) {
+      const strangerPaymentId = strangerBooking.body.data.payment.id;
+      await admin.client.post(`/payments/${strangerPaymentId}/claim`, {
+        reference: `OTHER${Date.now()}`,
+      });
+      const poach = await organizer.client.post(`/payments/${strangerPaymentId}/verify`, {
+        approved: true,
+      });
+      check('a facilitator cannot verify money for an event that is not theirs',
+        poach.status === 403, describe(poach));
+
+      const strangerQueue = await organizer.client.get('/payments/awaiting-verification');
+      check('nor does that claim appear in their queue',
+        strangerQueue.status === 200 &&
+        !strangerQueue.body.data.some((p) => p.id === strangerPaymentId),
+        { count: strangerQueue.body?.data?.length });
+    }
 
     /* Claiming */
     const shortRef = await member.client.post(`/payments/${offlinePaymentId}/claim`, { reference: 'abc' });
     check('a reference too short to be real is refused', shortRef.status === 422, describe(shortRef));
 
     const utr = `UTR${Date.now()}`;
+    const badPan = await member.client.post(`/payments/${offlinePaymentId}/claim`, {
+      reference: `PANTEST${Date.now()}`,
+      pan: 'NOTAPAN',
+    });
+    check('a PAN that is not shaped like one is refused', badPan.status === 422, describe(badPan));
+
     const claimed = await member.client.post(`/payments/${offlinePaymentId}/claim`, {
       reference: utr,
-      note: 'Paid by UPI from my SBI account',
+      note: 'Paid by UPI',
+      pan: 'ABCDE1234F',
+      proofUrl: 'https://example.org/proof.png',
     });
     check('a payer can claim they have paid, quoting the reference',
       claimed.status === 200 && claimed.body.data.status === 'awaiting_verification',
@@ -886,6 +939,10 @@ try {
 
     check('claiming issues no receipt',
       !claimed.body.data.receiptNo, claimed.body?.data?.receiptNo);
+    check('the proof and the optional PAN are kept with the claim',
+      claimed.body.data.claimProofUrl === 'https://example.org/proof.png' &&
+      claimed.body.data.payerPan === 'ABCDE1234F',
+      { proof: claimed.body?.data?.claimProofUrl, pan: claimed.body?.data?.payerPan });
 
     /* The reference is the thing that must not be reusable. */
     const secondBooking = await admin.client.post('/registrations', {
@@ -914,11 +971,19 @@ try {
     const memberQueue = await member.client.get('/payments/awaiting-verification');
     check('a member cannot read the verification queue', memberQueue.status === 403, describe(memberQueue));
 
+    const ownQueue = await organizer.client.get('/payments/awaiting-verification');
+    check('the facilitator running the event sees the claim in their own queue',
+      ownQueue.status === 200 && ownQueue.body.data.some((p) => p.id === offlinePaymentId),
+      { status: ownQueue.status, count: ownQueue.body?.data?.length });
+
     const noReason = await admin.client.post(`/payments/${offlinePaymentId}/verify`, { approved: false });
     check('rejecting without a reason is refused', noReason.status === 422, describe(noReason));
 
-    const approved = await admin.client.post(`/payments/${offlinePaymentId}/verify`, { approved: true });
-    check('an administrator can verify the payment', approved.status === 200, describe(approved));
+    const approved = await organizer.client.post(`/payments/${offlinePaymentId}/verify`, {
+      approved: true,
+    });
+    check('the facilitator running the event can verify its payment',
+      approved.status === 200, describe(approved));
     check('verifying issues a receipt', Boolean(approved.body?.data?.receiptNo), approved.body?.data);
 
     const seatAfter = await db.queryOne(`SELECT status FROM registrations WHERE id = $1`, [bookedSeatId]);
@@ -939,11 +1004,11 @@ try {
 
   /* Rejection releases the seat. */
   const doomed = await admin.client.post('/registrations', {
-    eventId: qrEvent.body?.data?.id, memberId: members[1]?.id, method: 'sbi_collect',
+    eventId: qrEvent.body?.data?.id, memberId: members[1]?.id, method: 'qr_upi',
   });
   if (doomed.status === 201 && doomed.body.data.payment) {
     const doomedPayment = doomed.body.data.payment.id;
-    await admin.client.post(`/payments/${doomedPayment}/claim`, { reference: `SBI${Date.now()}` });
+    await admin.client.post(`/payments/${doomedPayment}/claim`, { reference: `REJ${Date.now()}` });
     const rejected = await admin.client.post(`/payments/${doomedPayment}/verify`, {
       approved: false,
       reason: 'No matching credit on the statement',
@@ -953,6 +1018,68 @@ try {
     const releasedSeat = await db.queryOne(
       `SELECT status FROM registrations WHERE id = $1`, [doomed.body.data.registration.id]);
     check('rejecting a claim releases the seat', releasedSeat.status === 'cancelled', releasedSeat);
+  }
+
+  /* The facilitator's choice of QR. */
+  const ownQrEvent = await organizer.client.post('/events', {
+    ...validEvent,
+    title: `Collected on my own QR ${Date.now()}`,
+    type: 'paid',
+    memberPrice: 150,
+    nonMemberPrice: 150,
+    lifecycle: 'published',
+    organizerId: organizer.user.id,
+    paymentQrMode: 'own',
+    paymentQrUrl: 'https://example.org/facilitator-qr.png',
+    registrationOpensAt: new Date(Date.now() - 86_400_000).toISOString(),
+  });
+  check('a facilitator can choose to collect on their own QR',
+    ownQrEvent.status === 201 && ownQrEvent.body.data.paymentQrMode === 'own',
+    describe(ownQrEvent));
+
+  const noQr = await organizer.client.post('/events', {
+    ...validEvent,
+    title: `Own QR but none given ${Date.now()}`,
+    type: 'paid',
+    memberPrice: 150,
+    nonMemberPrice: 150,
+    organizerId: organizer.user.id,
+    paymentQrMode: 'own',
+  });
+  check('choosing your own QR without supplying one is refused',
+    noQr.status === 422, describe(noQr));
+
+  if (ownQrEvent.status === 201) {
+    const ownBooking = await admin.client.post('/registrations', {
+      eventId: ownQrEvent.body.data.id, memberId: members[2].id, method: 'qr_upi',
+    });
+    if (ownBooking.status === 201 && ownBooking.body.data.payment) {
+      const ownInst = await admin.client.get(
+        `/payments/${ownBooking.body.data.payment.id}/instructions`);
+      check("that event's payer is shown the facilitator's QR, not the Trust's",
+        ownInst.body?.data?.qrSource === 'event' &&
+        ownInst.body?.data?.qrUrl === 'https://example.org/facilitator-qr.png',
+        ownInst.body?.data);
+    }
+  }
+
+  /* Membership money is never a facilitator's. */
+  const memberSub = await admin.client.post('/subscriptions', {
+    planId: aPlan.id, memberId: members[2].id, method: 'qr_upi',
+  });
+  if (memberSub.status === 201) {
+    const subInst = await admin.client.get(
+      `/payments/${memberSub.body.data.payment.id}/instructions`);
+    check('a membership is always collected on the Trust QR',
+      subInst.body?.data?.qrSource === 'trust', subInst.body?.data?.qrSource);
+
+    await admin.client.post(`/payments/${memberSub.body.data.payment.id}/claim`, {
+      reference: `SUB${Date.now()}`,
+    });
+    const facilitatorTriesMembership = await organizer.client.post(
+      `/payments/${memberSub.body.data.payment.id}/verify`, { approved: true });
+    check('a facilitator cannot verify membership income',
+      facilitatorTriesMembership.status === 403, describe(facilitatorTriesMembership));
   }
 
   /* -- one member cannot read another's things -- */

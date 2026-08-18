@@ -446,7 +446,7 @@ CREATE TABLE IF NOT EXISTS payments (
   description        text NOT NULL DEFAULT '',
   amount             numeric(10,2) NOT NULL CHECK (amount >= 0),
   method             text NOT NULL DEFAULT 'upi'
-                       CHECK (method IN ('upi','card','netbanking','wallet','qr_upi','sbi_collect')),
+                       CHECK (method IN ('upi','card','netbanking','wallet','qr_upi')),
   -- 'awaiting_verification' is the state a payment made outside the system
   -- sits in: the payer says they have paid and has quoted a reference, and
   -- an administrator has not yet checked it against the bank. Nothing is
@@ -460,6 +460,9 @@ CREATE TABLE IF NOT EXISTS payments (
   -- stops the same transfer being claimed twice.
   claim_reference    text,
   claim_note         text,
+  -- Optional, and asked for before paying rather than after: some payers need
+  -- it on the receipt, most do not.
+  payer_pan          text,
   claim_proof_url    text,
   claimed_at         timestamptz,
   verified_by        uuid REFERENCES users(id) ON DELETE SET NULL,
@@ -528,6 +531,7 @@ DO $$
 BEGIN
   ALTER TABLE payments ADD COLUMN IF NOT EXISTS claim_reference  text;
   ALTER TABLE payments ADD COLUMN IF NOT EXISTS claim_note       text;
+  ALTER TABLE payments ADD COLUMN IF NOT EXISTS payer_pan        text;
   ALTER TABLE payments ADD COLUMN IF NOT EXISTS claim_proof_url  text;
   ALTER TABLE payments ADD COLUMN IF NOT EXISTS claimed_at       timestamptz;
   ALTER TABLE payments ADD COLUMN IF NOT EXISTS verified_by      uuid;
@@ -540,7 +544,7 @@ BEGIN
 
   ALTER TABLE payments DROP CONSTRAINT IF EXISTS payments_method_check;
   ALTER TABLE payments ADD  CONSTRAINT payments_method_check
-    CHECK (method IN ('upi','card','netbanking','wallet','qr_upi','sbi_collect'));
+    CHECK (method IN ('upi','card','netbanking','wallet','qr_upi'));
 
   ALTER TABLE payments DROP CONSTRAINT IF EXISTS payments_claim_has_reference;
   ALTER TABLE payments ADD  CONSTRAINT payments_claim_has_reference
@@ -555,6 +559,14 @@ BEGIN
   -- it, and it is recorded on the event so a reconciliation years later can
   -- still say which account took the money.
   ALTER TABLE events ADD COLUMN IF NOT EXISTS payment_qr_url text;
+  ALTER TABLE events ADD COLUMN IF NOT EXISTS payment_qr_mode text NOT NULL DEFAULT 'trust';
+  ALTER TABLE events DROP CONSTRAINT IF EXISTS events_qr_mode_check;
+  ALTER TABLE events ADD  CONSTRAINT events_qr_mode_check
+    CHECK (payment_qr_mode IN ('trust','own'));
+  -- Choosing your own QR means supplying one.
+  ALTER TABLE events DROP CONSTRAINT IF EXISTS events_own_qr_has_url;
+  ALTER TABLE events ADD  CONSTRAINT events_own_qr_has_url
+    CHECK (payment_qr_mode <> 'own' OR payment_qr_url IS NOT NULL);
 END $$;
 
 CREATE INDEX IF NOT EXISTS payments_awaiting_idx ON payments (claimed_at)

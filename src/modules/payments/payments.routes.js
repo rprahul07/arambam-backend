@@ -9,7 +9,7 @@ import asyncHandler from '../../utils/asyncHandler.js';
 import ApiError from '../../utils/ApiError.js';
 import { ok, paginated } from '../../utils/response.js';
 import { validateBody, validateParams, validateQuery } from '../../middleware/validate.js';
-import { authenticate, adminOnly } from '../../middleware/auth.js';
+import { authenticate, staffOnly } from '../../middleware/auth.js';
 import { writeLimiter } from '../../middleware/rateLimit.js';
 
 const router = Router();
@@ -46,7 +46,16 @@ const claimSchema = z.object({
     .min(6, 'Enter the reference exactly as your bank shows it')
     .max(64, 'That reference is longer than any bank issues'),
   note: z.string().trim().max(500).optional(),
+  /* A screenshot of the transfer. Not required — a reference is enough to
+     check a statement — but it settles most questions without a phone call. */
   proofUrl: z.string().trim().url().max(500).optional(),
+  /* Optional throughout: asked before paying, never insisted on. */
+  pan: z
+    .string()
+    .trim()
+    .toUpperCase()
+    .regex(/^[A-Z]{5}[0-9]{4}[A-Z]$/, 'A PAN looks like ABCDE1234F')
+    .optional(),
 });
 
 const verifySchema = z
@@ -80,15 +89,25 @@ router.get(
 );
 
 /**
- * GET /payments/awaiting-verification — the administrator's queue.
+ * GET /payments/awaiting-verification — the queue of claims to check.
+ *
+ * Scoped to the caller: everything for an administrator, own events only for
+ * a facilitator.
  *
  * Declared ahead of `/:id`, which would otherwise match the word
  * "awaiting-verification" and reject it as a malformed identifier.
  */
+/** GET /payments/:id/instructions — the QR to pay against, and the amount. */
+router.get(
+  '/:id/instructions',
+  validateParams(idParam),
+  asyncHandler(async (req, res) => ok(res, await offline.instructions(req.params.id, req.user))),
+);
+
 router.get(
   '/awaiting-verification',
-  adminOnly,
-  asyncHandler(async (req, res) => ok(res, await offline.pending())),
+  staffOnly,
+  asyncHandler(async (req, res) => ok(res, await offline.pending(req.user))),
 );
 
 router.get(
@@ -193,13 +212,17 @@ router.post(
 /**
  * POST /payments/:id/verify
  *
- * The administrator's decision, taken with the bank statement in front of
- * them. Only this route can turn money paid outside the system into a
- * confirmed seat or an active membership.
+ * The decision, taken with the bank statement in front of whoever makes it.
+ * Only this route can turn money paid outside the system into a confirmed
+ * seat or an active membership.
+ *
+ * An administrator may rule on anything; a facilitator only on their own
+ * events, and never on membership income. `offline.verify` enforces that —
+ * this guard only keeps members out.
  */
 router.post(
   '/:id/verify',
-  adminOnly,
+  staffOnly,
   writeLimiter,
   validateParams(idParam),
   validateBody(verifySchema),
