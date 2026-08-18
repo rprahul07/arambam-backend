@@ -32,6 +32,16 @@ const organisationSchema = z.object({
   email: z.union([z.literal(''), z.string().email('That does not look like an email address')]).default(''),
   phone: z.string().trim().max(40).default(''),
   website: z.string().trim().max(120).default(''),
+
+  /* How the Trust takes money. Shown to a payer at the point of paying, so
+     the numbers here are the ones that end up on a bank statement — which is
+     why only an administrator may edit them. */
+  paymentUpiId: z.string().trim().max(120).default(''),
+  paymentQrUrl: z.union([z.literal(''), z.string().url('That does not look like a link')]).default(''),
+  sbiCollectUrl: z
+    .union([z.literal(''), z.string().url('That does not look like a link')])
+    .default('https://onlinesbi.sbi.bank.in/sbicollect/icollecthome.htm?corpID=5913215'),
+  paymentInstructions: z.string().trim().max(1000).default(''),
 });
 
 /**

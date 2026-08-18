@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import * as service from './payments.service.js';
+import * as offline from './offline.service.js';
 import { queryOne } from '../../database/index.js';
 import { PAYMENT_PURPOSE_VALUES, PAYMENT_STATUS_VALUES, ROLES } from '../../config/constants.js';
 import { toPayment } from '../../serializers/index.js';
@@ -8,7 +9,7 @@ import asyncHandler from '../../utils/asyncHandler.js';
 import ApiError from '../../utils/ApiError.js';
 import { ok, paginated } from '../../utils/response.js';
 import { validateBody, validateParams, validateQuery } from '../../middleware/validate.js';
-import { authenticate } from '../../middleware/auth.js';
+import { authenticate, adminOnly } from '../../middleware/auth.js';
 import { writeLimiter } from '../../middleware/rateLimit.js';
 
 const router = Router();
@@ -36,10 +37,35 @@ const listSchema = z.object({
   pageSize: z.coerce.number().int().min(1).max(200).default(20),
 });
 
+const claimSchema = z.object({
+  /* A UTR is 12–22 characters depending on the rail; an SBI Collect reference
+     is its own shape. Kept permissive in form and strict in uniqueness. */
+  reference: z
+    .string()
+    .trim()
+    .min(6, 'Enter the reference exactly as your bank shows it')
+    .max(64, 'That reference is longer than any bank issues'),
+  note: z.string().trim().max(500).optional(),
+  proofUrl: z.string().trim().url().max(500).optional(),
+});
+
+const verifySchema = z
+  .object({
+    approved: z.boolean(),
+    reason: z.string().trim().max(500).optional(),
+  })
+  .refine((v) => v.approved || Boolean(v.reason), {
+    path: ['reason'],
+    message: 'Say why the payment could not be verified — the payer is told',
+  });
+
 /**
- * GET   /payments             The ledger — a member's own, or everything (administrator)
- * GET   /payments/:id         One transaction
- * POST  /payments/:id/settle  Apply the verified gateway outcome
+ * GET   /payments                    The ledger — a member's own, or everything (administrator)
+ * GET   /payments/:id                One transaction
+ * POST  /payments/:id/settle         Apply the verified gateway outcome
+ * POST  /payments/:id/claim          "I have paid" — quotes the bank reference
+ * GET   /payments/awaiting-verification  The administrator's queue
+ * POST  /payments/:id/verify         The administrator's decision on a claim
  */
 
 router.use(authenticate);
@@ -51,6 +77,18 @@ router.get(
     const { rows, meta } = await service.list(req.validatedQuery, req.user);
     return paginated(res, rows, meta);
   }),
+);
+
+/**
+ * GET /payments/awaiting-verification — the administrator's queue.
+ *
+ * Declared ahead of `/:id`, which would otherwise match the word
+ * "awaiting-verification" and reject it as a malformed identifier.
+ */
+router.get(
+  '/awaiting-verification',
+  adminOnly,
+  asyncHandler(async (req, res) => ok(res, await offline.pending())),
 );
 
 router.get(
@@ -126,6 +164,55 @@ router.get(
       },
       organisation: organisation?.value ?? {},
     });
+  }),
+);
+
+/* ------------------------------------------- payments made outside the system */
+
+/**
+ * POST /payments/:id/claim
+ *
+ * The payer stating they have paid, and quoting the reference their bank gave
+ * them. This confirms nothing on its own.
+ */
+router.post(
+  '/:id/claim',
+  writeLimiter,
+  validateParams(idParam),
+  validateBody(claimSchema),
+  asyncHandler(async (req, res) => {
+    const payment = await offline.claim({ paymentId: req.params.id, ...req.body }, req.user);
+    return ok(
+      res,
+      payment,
+      'Thank you — your reference has been recorded. We will confirm once it is checked against the account.',
+    );
+  }),
+);
+
+/**
+ * POST /payments/:id/verify
+ *
+ * The administrator's decision, taken with the bank statement in front of
+ * them. Only this route can turn money paid outside the system into a
+ * confirmed seat or an active membership.
+ */
+router.post(
+  '/:id/verify',
+  adminOnly,
+  writeLimiter,
+  validateParams(idParam),
+  validateBody(verifySchema),
+  asyncHandler(async (req, res) => {
+    const result = await offline.verify(
+      { paymentId: req.params.id, approved: req.body.approved, reason: req.body.reason },
+      req.user,
+    );
+    return ok(
+      res,
+      result.payment,
+      req.body.approved ? 'Payment verified and the booking confirmed' : 'Payment rejected and the hold released',
+    );
   }),
 );
 

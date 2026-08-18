@@ -811,6 +811,150 @@ try {
     check('a receipt is available once paid', receipt.status === 200, describe(receipt));
   }
 
+  /* ============================== paying outside the system (QR / SBI) ==== */
+
+  section('Payments made outside the system');
+
+  const qrEvent = await admin.client.post('/events', {
+    ...validEvent,
+    title: `Paid by QR ${Date.now()}`,
+    type: 'paid',
+    memberPrice: 300,
+    nonMemberPrice: 500,
+    capacity: 10,
+    lifecycle: 'published',
+    registrationOpensAt: new Date(Date.now() - 86_400_000).toISOString(),
+  });
+  check('a paid event for offline payment can be created', qrEvent.status === 201, describe(qrEvent));
+
+  const booking = await member.client.post('/registrations', {
+    eventId: qrEvent.body?.data?.id,
+    method: 'qr_upi',
+  });
+  check('a member can book a seat to pay by QR', booking.status === 201, describe(booking));
+
+  const offlinePaymentId = booking.body?.data?.payment?.id;
+  const bookedSeatId = booking.body?.data?.registration?.id;
+
+  if (offlinePaymentId) {
+    check('the seat is held, not confirmed, before any money is claimed',
+      booking.body.data.registration.status === 'pending_payment',
+      booking.body?.data?.registration?.status);
+
+    /* The whole point: a payer cannot confirm their own payment. */
+    const selfSettle = await member.client.post(`/payments/${offlinePaymentId}/settle`, {
+      outcome: 'successful',
+    });
+    check('a member cannot settle their own offline payment',
+      selfSettle.status === 403 && selfSettle.body?.code === 'REQUIRES_VERIFICATION',
+      describe(selfSettle));
+
+    const adminShortcut = await admin.client.post(`/payments/${offlinePaymentId}/settle`, {
+      outcome: 'successful',
+    });
+    check('not even an administrator can shortcut the settle route for an offline payment',
+      adminShortcut.status === 403, describe(adminShortcut));
+
+    const selfVerify = await member.client.post(`/payments/${offlinePaymentId}/verify`, {
+      approved: true,
+    });
+    check('a member cannot verify their own payment', selfVerify.status === 403, describe(selfVerify));
+
+    const organizerVerify = await organizer.client.post(`/payments/${offlinePaymentId}/verify`, {
+      approved: true,
+    });
+    check('an organizer cannot verify a payment either',
+      organizerVerify.status === 403, describe(organizerVerify));
+
+    /* Claiming */
+    const shortRef = await member.client.post(`/payments/${offlinePaymentId}/claim`, { reference: 'abc' });
+    check('a reference too short to be real is refused', shortRef.status === 422, describe(shortRef));
+
+    const utr = `UTR${Date.now()}`;
+    const claimed = await member.client.post(`/payments/${offlinePaymentId}/claim`, {
+      reference: utr,
+      note: 'Paid by UPI from my SBI account',
+    });
+    check('a payer can claim they have paid, quoting the reference',
+      claimed.status === 200 && claimed.body.data.status === 'awaiting_verification',
+      describe(claimed));
+
+    check('claiming does not confirm the seat', await (async () => {
+      const row = await db.queryOne(`SELECT status FROM registrations WHERE id = $1`, [bookedSeatId]);
+      return row.status === 'pending_payment';
+    })(), 'the seat should still only be held');
+
+    check('claiming issues no receipt',
+      !claimed.body.data.receiptNo, claimed.body?.data?.receiptNo);
+
+    /* The reference is the thing that must not be reusable. */
+    const secondBooking = await admin.client.post('/registrations', {
+      eventId: qrEvent.body.data.id, memberId: aMember.id, method: 'qr_upi',
+    });
+    if (secondBooking.status === 201 && secondBooking.body.data.payment) {
+      const reused = await admin.client.post(
+        `/payments/${secondBooking.body.data.payment.id}/claim`, { reference: utr });
+      check('the same bank reference cannot be claimed twice',
+        reused.status === 409 && reused.body.code === 'REFERENCE_ALREADY_CLAIMED',
+        describe(reused));
+
+      const caseVariant = await admin.client.post(
+        `/payments/${secondBooking.body.data.payment.id}/claim`,
+        { reference: utr.toLowerCase() });
+      check('nor the same reference in different case or spacing',
+        caseVariant.status === 409, describe(caseVariant));
+    }
+
+    /* The queue, and the decision */
+    const queue = await admin.client.get('/payments/awaiting-verification');
+    check('the claim appears in the administrator queue',
+      queue.status === 200 && queue.body.data.some((p) => p.id === offlinePaymentId),
+      { status: queue.status, count: queue.body?.data?.length });
+
+    const memberQueue = await member.client.get('/payments/awaiting-verification');
+    check('a member cannot read the verification queue', memberQueue.status === 403, describe(memberQueue));
+
+    const noReason = await admin.client.post(`/payments/${offlinePaymentId}/verify`, { approved: false });
+    check('rejecting without a reason is refused', noReason.status === 422, describe(noReason));
+
+    const approved = await admin.client.post(`/payments/${offlinePaymentId}/verify`, { approved: true });
+    check('an administrator can verify the payment', approved.status === 200, describe(approved));
+    check('verifying issues a receipt', Boolean(approved.body?.data?.receiptNo), approved.body?.data);
+
+    const seatAfter = await db.queryOne(`SELECT status FROM registrations WHERE id = $1`, [bookedSeatId]);
+    check('the seat is confirmed only once the payment is verified',
+      seatAfter.status === 'confirmed', seatAfter);
+
+    const audit = await db.queryOne(
+      `SELECT verified_by, verified_at, claim_reference FROM payments WHERE id = $1`,
+      [offlinePaymentId],
+    );
+    check('who verified it and when is recorded against the payment',
+      Boolean(audit.verified_by) && Boolean(audit.verified_at) && Boolean(audit.claim_reference), audit);
+
+    const reVerify = await admin.client.post(`/payments/${offlinePaymentId}/verify`, { approved: true });
+    check('verifying an already verified payment changes nothing',
+      reVerify.status === 200, describe(reVerify));
+  }
+
+  /* Rejection releases the seat. */
+  const doomed = await admin.client.post('/registrations', {
+    eventId: qrEvent.body?.data?.id, memberId: members[1]?.id, method: 'sbi_collect',
+  });
+  if (doomed.status === 201 && doomed.body.data.payment) {
+    const doomedPayment = doomed.body.data.payment.id;
+    await admin.client.post(`/payments/${doomedPayment}/claim`, { reference: `SBI${Date.now()}` });
+    const rejected = await admin.client.post(`/payments/${doomedPayment}/verify`, {
+      approved: false,
+      reason: 'No matching credit on the statement',
+    });
+    check('a claim can be rejected with a reason', rejected.status === 200, describe(rejected));
+
+    const releasedSeat = await db.queryOne(
+      `SELECT status FROM registrations WHERE id = $1`, [doomed.body.data.registration.id]);
+    check('rejecting a claim releases the seat', releasedSeat.status === 'cancelled', releasedSeat);
+  }
+
   /* -- one member cannot read another's things -- */
   const otherMember =
     data.members.find((m) => m.id !== member.user?.memberId && m.status === 'active') ?? aMember;

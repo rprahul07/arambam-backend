@@ -1,6 +1,7 @@
 import { queryAll, queryOne, withTransaction } from '../../database/index.js';
 import {
   MEMBERSHIP_STATUS,
+  OFFLINE_PAYMENT_METHODS,
   PAYMENT_PURPOSE,
   PAYMENT_STATUS,
   REGISTRATION_STATUS,
@@ -57,11 +58,31 @@ export async function settle(
   if (payment.status === PAYMENT_STATUS.SUCCESSFUL) {
     return { payment: toPayment(payment), alreadySettled: true };
   }
-  if (payment.status !== PAYMENT_STATUS.PENDING && outcome === PAYMENT_STATUS.SUCCESSFUL) {
+  if (
+    ![PAYMENT_STATUS.PENDING, PAYMENT_STATUS.AWAITING_VERIFICATION].includes(payment.status) &&
+    outcome === PAYMENT_STATUS.SUCCESSFUL
+  ) {
     throw ApiError.conflict(
       'That payment was already closed and cannot be marked successful',
       undefined,
       'PAYMENT_CLOSED',
+    );
+  }
+
+  /**
+   * Money taken by QR or through SBI Collect has no gateway behind it, so
+   * there is no signature to check and nothing to make the caller's word
+   * worth anything. It is settled in exactly one way: an administrator finds
+   * the reference on the bank statement and approves it, which reaches this
+   * function with `trusted` already established. A request arriving here
+   * directly — from the payer's own browser, say — is refused however
+   * confidently it asserts the money moved.
+   */
+  if (OFFLINE_PAYMENT_METHODS.includes(payment.method) && !trusted) {
+    throw ApiError.forbidden(
+      'A payment made by QR or SBI Collect is confirmed by the office once the reference is checked, not from here.',
+      undefined,
+      'REQUIRES_VERIFICATION',
     );
   }
 

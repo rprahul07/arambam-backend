@@ -5,6 +5,8 @@ import {
   EVENT_LIFECYCLE,
   MEMBERSHIP_STATUS,
   OCCUPYING_STATUSES,
+  OFFLINE_HOLD_HOURS,
+  OFFLINE_PAYMENT_METHODS,
   PAYMENT_PURPOSE,
   PAYMENT_STATUS,
   REGISTRATION_STATUS,
@@ -36,6 +38,21 @@ export const priceFor = (event, isActiveMember) => {
   if (event.type === 'free') return 0;
   return Number(isActiveMember ? event.member_price : event.non_member_price);
 };
+
+/**
+ * How long the seat is held.
+ *
+ * A gateway payment either completes in the next few minutes or does not, so
+ * twenty of them is generous. Paying by QR or through SBI Collect means
+ * leaving the site, opening a banking app and coming back with a reference —
+ * and possibly doing it after the bank's own delay — so that hold is counted
+ * in hours instead.
+ */
+function holdMillis(method) {
+  return OFFLINE_PAYMENT_METHODS.includes(method)
+    ? OFFLINE_HOLD_HOURS * 60 * 60 * 1000
+    : env.payment.holdMinutes * 60 * 1000;
+}
 
 /**
  * The same derivation the front end runs in `lib/domain.ts`. Kept here so the
@@ -85,6 +102,7 @@ export async function begin({ eventId, memberId, method, id, paymentId }, actor)
           amount: expectedAmount,
           receipt: `evt-${eventId.slice(0, 8)}-${Date.now().toString(36)}`,
           notes: { eventId, memberId },
+          method,
         })
       : null;
 
@@ -169,7 +187,7 @@ export async function begin({ eventId, memberId, method, id, paymentId }, actor)
         pricedAsMember,
         amount,
         now,
-        amount === 0 ? null : new Date(now.getTime() + env.payment.holdMinutes * 60 * 1000),
+        amount === 0 ? null : new Date(now.getTime() + holdMillis(method)),
         id ?? null,
       ],
     );
@@ -459,7 +477,17 @@ export async function releaseExpiredHolds() {
     `UPDATE registrations
      SET status = 'cancelled', cancelled_at = now(),
          cancellation_reason = 'Payment was not completed in time', hold_expires_at = NULL
-     WHERE status = 'pending_payment' AND hold_expires_at IS NOT NULL AND hold_expires_at < now()
+     WHERE status = 'pending_payment'
+       AND hold_expires_at IS NOT NULL
+       AND hold_expires_at < now()
+       -- A payer who has paid and quoted their reference has done everything
+       -- asked of them. Their seat waits for the administrator to check it,
+       -- however long that takes; the hold only governs the time before a
+       -- claim is made.
+       AND NOT EXISTS (
+         SELECT 1 FROM payments p
+         WHERE p.id = registrations.payment_id AND p.status = 'awaiting_verification'
+       )
      RETURNING id, payment_id`,
   );
 

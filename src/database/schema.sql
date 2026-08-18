@@ -446,9 +446,25 @@ CREATE TABLE IF NOT EXISTS payments (
   description        text NOT NULL DEFAULT '',
   amount             numeric(10,2) NOT NULL CHECK (amount >= 0),
   method             text NOT NULL DEFAULT 'upi'
-                       CHECK (method IN ('upi','card','netbanking','wallet')),
+                       CHECK (method IN ('upi','card','netbanking','wallet','qr_upi','sbi_collect')),
+  -- 'awaiting_verification' is the state a payment made outside the system
+  -- sits in: the payer says they have paid and has quoted a reference, and
+  -- an administrator has not yet checked it against the bank. Nothing is
+  -- confirmed on the payer's word alone.
   status             text NOT NULL DEFAULT 'pending'
-                       CHECK (status IN ('successful','pending','failed','cancelled')),
+                       CHECK (status IN ('successful','pending','awaiting_verification','failed','cancelled')),
+
+  /* ---- payment made outside the system (QR / SBI Collect) ---- */
+  -- The UTR or SBI Collect reference the payer quotes. Unique across the
+  -- table: one bank reference can settle exactly one thing, which is what
+  -- stops the same transfer being claimed twice.
+  claim_reference    text,
+  claim_note         text,
+  claim_proof_url    text,
+  claimed_at         timestamptz,
+  verified_by        uuid REFERENCES users(id) ON DELETE SET NULL,
+  verified_at        timestamptz,
+  rejection_reason   text,
   gateway            text NOT NULL DEFAULT 'simulated',
   gateway_order_id   text,
   gateway_payment_id text,
@@ -466,8 +482,17 @@ CREATE TABLE IF NOT EXISTS payments (
   ),
   CONSTRAINT payments_receipt_on_success CHECK (
     status <> 'successful' OR (receipt_no IS NOT NULL AND completed_at IS NOT NULL)
+  ),
+  -- A claim is a claim: it has to carry the reference being claimed.
+  CONSTRAINT payments_claim_has_reference CHECK (
+    status <> 'awaiting_verification' OR claim_reference IS NOT NULL
   )
 );
+
+-- One bank reference settles one payment. Enforced here rather than in code
+-- so two administrators approving at the same moment cannot both succeed.
+CREATE UNIQUE INDEX IF NOT EXISTS payments_claim_reference_key
+  ON payments (lower(claim_reference)) WHERE claim_reference IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS payments_member_idx       ON payments (member_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS payments_status_idx       ON payments (status);
@@ -496,6 +521,44 @@ BEGIN
       FOREIGN KEY (payment_id) REFERENCES payments(id) ON DELETE SET NULL;
   END IF;
 END $$;
+
+-- Paying outside the system: the columns above only appear on a fresh
+-- database, so an existing one is brought up to the same shape here.
+DO $$
+BEGIN
+  ALTER TABLE payments ADD COLUMN IF NOT EXISTS claim_reference  text;
+  ALTER TABLE payments ADD COLUMN IF NOT EXISTS claim_note       text;
+  ALTER TABLE payments ADD COLUMN IF NOT EXISTS claim_proof_url  text;
+  ALTER TABLE payments ADD COLUMN IF NOT EXISTS claimed_at       timestamptz;
+  ALTER TABLE payments ADD COLUMN IF NOT EXISTS verified_by      uuid;
+  ALTER TABLE payments ADD COLUMN IF NOT EXISTS verified_at      timestamptz;
+  ALTER TABLE payments ADD COLUMN IF NOT EXISTS rejection_reason text;
+
+  ALTER TABLE payments DROP CONSTRAINT IF EXISTS payments_status_check;
+  ALTER TABLE payments ADD  CONSTRAINT payments_status_check
+    CHECK (status IN ('successful','pending','awaiting_verification','failed','cancelled'));
+
+  ALTER TABLE payments DROP CONSTRAINT IF EXISTS payments_method_check;
+  ALTER TABLE payments ADD  CONSTRAINT payments_method_check
+    CHECK (method IN ('upi','card','netbanking','wallet','qr_upi','sbi_collect'));
+
+  ALTER TABLE payments DROP CONSTRAINT IF EXISTS payments_claim_has_reference;
+  ALTER TABLE payments ADD  CONSTRAINT payments_claim_has_reference
+    CHECK (status <> 'awaiting_verification' OR claim_reference IS NOT NULL);
+
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'payments_verified_by_fk') THEN
+    ALTER TABLE payments ADD CONSTRAINT payments_verified_by_fk
+      FOREIGN KEY (verified_by) REFERENCES users(id) ON DELETE SET NULL;
+  END IF;
+
+  -- Where the money for an event is collected. Only an administrator may set
+  -- it, and it is recorded on the event so a reconciliation years later can
+  -- still say which account took the money.
+  ALTER TABLE events ADD COLUMN IF NOT EXISTS payment_qr_url text;
+END $$;
+
+CREATE INDEX IF NOT EXISTS payments_awaiting_idx ON payments (claimed_at)
+  WHERE status = 'awaiting_verification';
 
 -- ---------------------------------------------------------------------------
 -- NOTIFICATIONS — the in-app notification centre.

@@ -309,6 +309,16 @@ export const toPayment = (row) =>
     createdAt: iso(row.created_at),
     completedAt: iso(row.completed_at),
     failureReason: row.failure_reason,
+
+    /* Paid outside the system. The reference is shown back to the payer so
+       they can see what was recorded, and to the administrator so they can
+       find it on the statement. */
+    claimReference: row.claim_reference,
+    claimNote: row.claim_note,
+    claimProofUrl: row.claim_proof_url,
+    claimedAt: iso(row.claimed_at),
+    verifiedAt: iso(row.verified_at),
+    rejectionReason: row.rejection_reason,
   });
 
 /* ------------------------------------------------------------ notification */

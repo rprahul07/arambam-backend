@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import env from '../config/env.js';
+import { OFFLINE_PAYMENT_METHODS } from '../config/constants.js';
 import ApiError from '../utils/ApiError.js';
 import { gatewayReference } from '../utils/codes.js';
 
@@ -48,7 +49,21 @@ const getRazorpay = async () => {
  * Opens a transaction with the gateway.
  * @returns {Promise<{reference: string, orderId: string|null, gateway: string, keyId?: string}>}
  */
-export async function createOrder({ amount, currency = env.payment.currency, receipt, notes = {} }) {
+export async function createOrder({
+  amount,
+  currency = env.payment.currency,
+  receipt,
+  notes = {},
+  method,
+}) {
+  /* Money taken by QR or through SBI Collect never touches a gateway: the
+     payer leaves the site, pays the Trust directly, and comes back with a
+     reference for an administrator to check. All this step does is mint the
+     number that ties the two together. */
+  if (OFFLINE_PAYMENT_METHODS.includes(method)) {
+    return { reference: gatewayReference(), orderId: null, gateway: 'offline' };
+  }
+
   if (isSimulated()) {
     return { reference: gatewayReference(), orderId: null, gateway: 'simulated' };
   }

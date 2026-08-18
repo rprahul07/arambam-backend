@@ -284,6 +284,7 @@ router.post(
       amount,
       receipt: `sub-${memberId.slice(0, 8)}-${Date.now().toString(36)}`,
       notes: { memberId, planId: plan.id, kind: purchase.kind },
+      method: req.body.method,
     });
 
     const result = await withTransaction(async (tx) => {

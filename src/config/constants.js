@@ -106,6 +106,8 @@ export const ATTENDANCE_VALUES = Object.values(ATTENDANCE);
 export const PAYMENT_STATUS = {
   SUCCESSFUL: 'successful',
   PENDING: 'pending',
+  /** Paid outside the system; a reference is quoted and awaits checking. */
+  AWAITING_VERIFICATION: 'awaiting_verification',
   FAILED: 'failed',
   CANCELLED: 'cancelled',
 };
@@ -114,7 +116,27 @@ export const PAYMENT_STATUS_VALUES = Object.values(PAYMENT_STATUS);
 export const PAYMENT_PURPOSE = { MEMBERSHIP: 'membership', EVENT: 'event' };
 export const PAYMENT_PURPOSE_VALUES = Object.values(PAYMENT_PURPOSE);
 
-export const PAYMENT_METHOD_VALUES = ['upi', 'card', 'netbanking', 'wallet'];
+export const PAYMENT_METHOD_VALUES = [
+  'upi',
+  'card',
+  'netbanking',
+  'wallet',
+  /** Trust QR, scanned and paid in any UPI app. */
+  'qr_upi',
+  /** SBI Collect, paid on the bank's own hosted page. */
+  'sbi_collect',
+];
+
+/** Methods settled by an administrator checking a bank statement. */
+export const OFFLINE_PAYMENT_METHODS = ['qr_upi', 'sbi_collect'];
+
+/**
+ * How long a seat or membership is held while a payment made outside the
+ * system is claimed and checked. Longer than a gateway hold because a person
+ * has to look at a bank statement, but not so long that abandoned claims keep
+ * a popular event showing as sold out.
+ */
+export const OFFLINE_HOLD_HOURS = 24;
 
 /* ---------------------------------------------------------- notifications */
 
