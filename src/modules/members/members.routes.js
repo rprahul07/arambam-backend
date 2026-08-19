@@ -12,7 +12,8 @@ import {
 import { validateBody, validateParams, validateQuery } from '../../middleware/validate.js';
 import { authenticate, adminOnly, staffOnly } from '../../middleware/auth.js';
 import { writeLimiter } from '../../middleware/rateLimit.js';
-import { uploadImage, publicUrl } from '../../middleware/upload.js';
+import { uploadImage } from '../../middleware/upload.js';
+import { store, remove, FOLDER } from '../../services/storage.service.js';
 import ApiError from '../../utils/ApiError.js';
 
 const router = Router();
@@ -90,7 +91,18 @@ router.post(
     const member = await service.findById(req.params.id);
     if (!member) throw ApiError.notFound('That member no longer exists');
 
-    const updated = await service.update(req.params.id, { photoUrl: publicUrl(req.file) }, req.user);
+    /* A replaced photograph leaves the old one behind unless it is removed,
+       and a member who updates theirs a few times should not cost the Trust a
+       growing bucket. Read before writing, delete after — so a failure to
+       delete never costs the new photograph. */
+    const existing = await service.findById(req.params.id);
+
+    const photoUrl = await store(req.file, FOLDER.MEMBER);
+    const updated = await service.update(req.params.id, { photoUrl }, req.user);
+
+    if (existing?.photo_url && existing.photo_url !== photoUrl) {
+      await remove(existing.photo_url);
+    }
     return ok(res, updated, 'Photograph updated');
   }),
 );

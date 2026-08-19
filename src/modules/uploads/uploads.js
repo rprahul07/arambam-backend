@@ -3,23 +3,20 @@ import asyncHandler from '../../utils/asyncHandler.js';
 import ApiError from '../../utils/ApiError.js';
 import { created } from '../../utils/response.js';
 import { authenticate, staffOnly } from '../../middleware/auth.js';
-import { uploadImage, publicUrl } from '../../middleware/upload.js';
+import { uploadImage } from '../../middleware/upload.js';
 import { writeLimiter } from '../../middleware/rateLimit.js';
-import { uploadToSupabase } from '../../services/storage.service.js';
+import { store, FOLDER } from '../../services/storage.service.js';
 
 const router = Router();
 
-async function handleUpload(req, res, folderName) {
+async function handleUpload(req, res, folder) {
   if (!req.file) throw ApiError.badRequest('Choose an image to upload');
-  
-  // Try Supabase Storage first, fallback to local URL
-  const supabaseUrl = await uploadToSupabase(req.file, folderName);
-  const finalUrl = supabaseUrl || publicUrl(req.file);
 
+  const url = await store(req.file, folder);
   return created(
     res,
-    { url: finalUrl, bytes: req.file.size, mimeType: req.file.mimetype },
-    'Image uploaded successfully',
+    { url, bytes: req.file.size, mimeType: req.file.mimetype },
+    'Image uploaded',
   );
 }
 
@@ -31,7 +28,7 @@ router.post(
   writeLimiter,
   ...uploadImage('event'),
   asyncHandler(async (req, res) => {
-    return handleUpload(req, res, 'event-covers');
+    return handleUpload(req, res, FOLDER.EVENT);
   }),
 );
 
@@ -43,7 +40,7 @@ router.post(
   writeLimiter,
   ...uploadImage('qr'),
   asyncHandler(async (req, res) => {
-    return handleUpload(req, res, 'qr-codes');
+    return handleUpload(req, res, FOLDER.QR);
   }),
 );
 
@@ -54,7 +51,7 @@ router.post(
   writeLimiter,
   ...uploadImage('proof'),
   asyncHandler(async (req, res) => {
-    return handleUpload(req, res, 'payment-proofs');
+    return handleUpload(req, res, FOLDER.PROOF);
   }),
 );
 
