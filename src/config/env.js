@@ -123,6 +123,13 @@ export const env = {
     url: process.env.SUPABASE_URL,
     key: process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY,
     bucket: process.env.SUPABASE_STORAGE_BUCKET || 'aarambam-assets',
+    /* A second, private bucket for images that are nobody else's business:
+       member photographs and the screenshots people send as proof of payment.
+       Served only through an authorised redirect — see `media.js`. */
+    privateBucket: process.env.SUPABASE_PRIVATE_BUCKET || 'aarambam-private',
+    /* How long a signed link stays good. Long enough to load a page and
+       glance at it, short enough that a copied link is not a lasting key. */
+    signedUrlSeconds: Number(process.env.SUPABASE_SIGNED_URL_SECONDS || 300),
   },
 
   /**

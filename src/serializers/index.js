@@ -8,6 +8,24 @@
  * `if (value)`. Nothing that is not in the front-end interface is sent: no
  * password hash, no token, no internal bookkeeping column.
  */
+import { mediaUrl } from '../services/storage.service.js';
+
+/**
+ * A private image, as a link the front end can put in an `img` tag.
+ *
+ * Member photographs and payment screenshots are stored as a bare object path
+ * rather than a URL, because there is no URL that would work — the bucket
+ * serves nothing to the public. What goes out instead is a link to `/media`,
+ * which checks who is asking and then redirects to a signed URL that expires.
+ *
+ * Anything already absolute is passed through untouched: public images, and
+ * photographs stored before this changed.
+ */
+const media = (value) => {
+  if (!value) return undefined;
+  if (value.startsWith('http://') || value.startsWith('https://')) return value;
+  return mediaUrl(value);
+};
 
 /** ISO-8601 with a `Z`, which is what `Dates are ISO-8601 strings` means here. */
 const iso = (value) => {
@@ -103,7 +121,7 @@ export const toMember = (row) =>
     age: num(row.age),
     dateOfBirth: day(row.date_of_birth),
     gender: row.gender,
-    photoUrl: row.photo_url,
+    photoUrl: media(row.photo_url),
 
     email: row.email,
     phone: row.phone,
@@ -319,7 +337,7 @@ export const toPayment = (row) =>
     claimReference: row.claim_reference,
     claimNote: row.claim_note,
     payerPan: row.payer_pan,
-    claimProofUrl: row.claim_proof_url,
+    claimProofUrl: media(row.claim_proof_url),
     claimedAt: iso(row.claimed_at),
     verifiedAt: iso(row.verified_at),
     rejectionReason: row.rejection_reason,

@@ -14,6 +14,7 @@ import paymentsRoutes from './payments/payments.routes.js';
 import notificationsRoutes from './notifications/notifications.js';
 import settingsRoutes from './settings/settings.js';
 import uploadsRoutes from './uploads/uploads.js';
+import mediaRoutes from './media/media.js';
 
 const router = Router();
 
@@ -37,6 +38,7 @@ router.get('/', (req, res) =>
       notifications: `${env.apiPrefix}/notifications`,
       settings: `${env.apiPrefix}/settings`,
       uploads: `${env.apiPrefix}/uploads`,
+      media: `${env.apiPrefix}/media`,
     },
   }),
 );
@@ -54,5 +56,6 @@ router.use('/payments', paymentsRoutes);
 router.use('/notifications', notificationsRoutes);
 router.use('/settings', settingsRoutes);
 router.use('/uploads', uploadsRoutes);
+router.use('/media', mediaRoutes);
 
 export default router;

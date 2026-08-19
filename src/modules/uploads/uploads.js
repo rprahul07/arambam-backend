@@ -5,14 +5,20 @@ import { created } from '../../utils/response.js';
 import { authenticate, staffOnly } from '../../middleware/auth.js';
 import { uploadImage } from '../../middleware/upload.js';
 import { writeLimiter } from '../../middleware/rateLimit.js';
-import { store, FOLDER } from '../../services/storage.service.js';
+import { store, mediaUrl, isPrivateFolder, FOLDER } from '../../services/storage.service.js';
 
 const router = Router();
 
 async function handleUpload(req, res, folder) {
   if (!req.file) throw ApiError.badRequest('Choose an image to upload');
 
-  const url = await store(req.file, folder);
+  const stored = await store(req.file, folder);
+
+  /* A private object is stored as a path; what the client gets is the link
+     that authorises before it serves. Sending it straight back on the next
+     request is fine — `toObjectPath` turns it into a path again on write. */
+  const url = isPrivateFolder(folder) ? mediaUrl(stored) : stored;
+
   return created(
     res,
     { url, bytes: req.file.size, mimeType: req.file.mimetype },

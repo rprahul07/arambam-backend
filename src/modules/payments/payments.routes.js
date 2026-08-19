@@ -11,6 +11,7 @@ import { ok, paginated } from '../../utils/response.js';
 import { validateBody, validateParams, validateQuery } from '../../middleware/validate.js';
 import { authenticate, staffOnly } from '../../middleware/auth.js';
 import { writeLimiter } from '../../middleware/rateLimit.js';
+import { toObjectPath } from '../../services/storage.service.js';
 
 const router = Router();
 
@@ -48,7 +49,9 @@ const claimSchema = z.object({
   note: z.string().trim().max(500).optional(),
   /* A screenshot of the transfer. Not required — a reference is enough to
      check a statement — but it settles most questions without a phone call. */
-  proofUrl: z.string().trim().url().max(500).optional(),
+  /* Same as a member photograph: the client returns the `/media` link, the
+     database keeps the object path. */
+  proofUrl: z.string().trim().url().max(500).transform(toObjectPath).optional(),
   /* Optional throughout: asked before paying, never insisted on. */
   pan: z
     .string()

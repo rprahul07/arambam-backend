@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { toObjectPath } from '../../services/storage.service.js';
 import {
   GENDER_VALUES,
   GUARDIAN_RELATION_VALUES,
@@ -37,7 +38,9 @@ const profile = {
     .trim()
     .regex(/^\d{4}-\d{2}-\d{2}$/, 'Use a date in the form 1996-04-12')
     .optional(),
-  photoUrl: z.string().trim().url().max(500).optional(),
+  /* Sent back as the `/media` link the upload returned; stored as the object
+     path it stands for, which is what the private bucket knows it by. */
+  photoUrl: z.string().trim().url().max(500).transform(toObjectPath).optional(),
 
   addressLine1: z.string().trim().min(1, 'Enter the address').max(200),
   addressLine2: optionalText(200),

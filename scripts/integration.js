@@ -22,6 +22,7 @@
  */
 
 import path from 'node:path';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
@@ -51,6 +52,10 @@ const { default: app } = await import('../src/app.js');
 const { default: db } = await import('../src/database/index.js');
 const { seed } = await import('../src/database/seed/index.js');
 const { default: env } = await import('../src/config/env.js');
+const storage = await import('../src/services/storage.service.js');
+
+/* Real objects this run puts in the private bucket, removed before it ends. */
+const temporaryObjects = [];
 
 /* ------------------------------------------------------------- harness -- */
 
@@ -90,7 +95,7 @@ function client() {
   let accessToken = null;
 
   const call = async (method, url, body, options = {}) => {
-    const headers = { Origin: 'http://localhost:5173' };
+    const headers = { Origin: 'http://localhost:5173', ...(options.headers ?? {}) };
     if (body !== undefined) headers['Content-Type'] = 'application/json';
     if (accessToken && !options.anonymous) headers.Authorization = `Bearer ${accessToken}`;
     if (jar.size) headers.Cookie = [...jar].map(([k, v]) => `${k}=${v}`).join('; ');
@@ -1209,6 +1214,175 @@ try {
   check('the health endpoint answers', health.status === 200, describe(health));
   const dbHealth = await anon.get('/health/db', { absolute: true });
   check('the database health endpoint answers', dbHealth.status === 200, describe(dbHealth));
+
+  /* ============================================ 4b. private images ======== */
+
+  /* Member photographs and payment screenshots are not public. They are
+     reached through `/media`, which decides who may see each one. These check
+     the deciding, which is the part that has to be right — that the object is
+     unguessable is a nice extra, not the protection. */
+
+  section('Private images');
+
+  /* Real objects in the real private bucket, so the checks below prove a link
+     is actually issued rather than merely that the door was not slammed. They
+     are removed again at the end of the run. Where storage is not configured
+     — a laptop with no keys — a name of the right shape stands in, and the
+     checks fall back to asserting the door rather than the link. */
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+    'base64',
+  );
+
+  const OBJECT = async (folder) => {
+    if (!storage.isRemote()) {
+      return `${folder}/${Date.now().toString(36)}-${crypto.randomBytes(12).toString('hex')}.png`;
+    }
+    const stored = await storage.store(
+      { buffer: png, mimetype: 'image/png', size: png.length },
+      folder,
+    );
+    temporaryObjects.push(stored);
+    return stored;
+  };
+
+  /* With a real object behind it an entitled caller gets a link; without one,
+     the most that can be said is that they were not turned away. */
+  const opened = (res) =>
+    storage.isRemote()
+      ? res.status === 200 && typeof res.body?.data?.url === 'string'
+      : ![401, 403, 404].includes(res.status);
+
+  /* What the API actually hands out — built from the same setting the
+     serializer uses, so a mismatch here would be a real mismatch. */
+  const mediaLink = (objectPath) => `${env.serverUrl}${env.apiPrefix}/media/${objectPath}`;
+  const asJson = { headers: { Accept: 'application/json' } };
+
+  /* An account with no membership and no business with any of this. Signing in
+     needs a confirmed address, so the confirmation is done here too. */
+  const strangerEmail = `stranger.${Date.now()}@example.org`;
+  const registered = await anon.post('/auth/register', {
+    name: 'Passing Stranger', email: strangerEmail, phone: '9000000123', password: 'Str0ng!Pass',
+  });
+  const token = new URL(registered.body?.data?.verificationLink ?? 'http://x/?token=')
+    .searchParams.get('token');
+  if (token) await anon.post('/auth/verify-email', { token, email: strangerEmail });
+  const stranger = await signIn(strangerEmail, 'Str0ng!Pass');
+  check('a bystander account can be created to test against',
+    Boolean(stranger.user), { register: registered.status, verified: Boolean(token) });
+
+  /* ---- a payment screenshot ---- */
+
+  /* Deliberately an event of the administrator's, so `organizer` is a
+     stranger to it and the ownership rule is actually exercised. */
+  const proofEvent = await admin.client.post('/events', {
+    ...validEvent,
+    title: `Proof of payment ${Date.now()}`,
+    type: 'paid',
+    memberPrice: 150,
+    nonMemberPrice: 150,
+    capacity: 5,
+    lifecycle: 'published',
+    organizerId: admin.user.id,
+    registrationOpensAt: new Date(Date.now() - 86_400_000).toISOString(),
+  });
+  const proofBooking = await member.client.post('/registrations', {
+    eventId: proofEvent.body?.data?.id, method: 'qr_upi',
+  });
+
+  if (proofBooking.status === 201 && proofBooking.body?.data?.payment) {
+    const proofPath = await OBJECT('payment-proofs');
+    const proofClaim = await member.client.post(
+      `/payments/${proofBooking.body.data.payment.id}/claim`,
+      { reference: `PROOF${Date.now()}`, proofUrl: mediaLink(proofPath) },
+    );
+
+    check('a screenshot is stored as a link that has to be asked for, not a public address',
+      proofClaim.status === 200 && proofClaim.body?.data?.claimProofUrl === mediaLink(proofPath),
+      { status: proofClaim.status, url: proofClaim.body?.data?.claimProofUrl });
+
+    const route = `/media/${proofPath}`;
+
+    const bySelf = await member.client.get(route, asJson);
+    check('the payer can open their own screenshot', opened(bySelf), describe(bySelf));
+
+    const byAdmin = await admin.client.get(route, asJson);
+    check('an administrator can open it, because they are the one confirming it',
+      opened(byAdmin), describe(byAdmin));
+
+    if (storage.isRemote() && bySelf.body?.data?.url) {
+      const expiry = Number(bySelf.body.data.expiresIn);
+      check('the link expires, rather than lasting for ever',
+        expiry > 0 && expiry <= 3600, expiry);
+
+      const fetched = await fetch(bySelf.body.data.url);
+      check('the link serves the image while it is good',
+        fetched.ok && (fetched.headers.get('content-type') ?? '').startsWith('image/'),
+        { status: fetched.status, type: fetched.headers.get('content-type') });
+
+      const unsigned = bySelf.body.data.url.split('?')[0];
+      const stripped = await fetch(unsigned);
+      check('the same address without the signature serves nothing',
+        !stripped.ok, { status: stripped.status });
+    }
+
+    const byOtherStaff = await organizer.client.get(route, asJson);
+    check('a facilitator cannot open a screenshot for an event that is not theirs',
+      byOtherStaff.status === 404, describe(byOtherStaff));
+
+    const byStranger = await stranger.client.get(route, asJson);
+    check('another member cannot open it at all', byStranger.status === 404, describe(byStranger));
+
+    const byNobody = await anon.get(route, asJson);
+    check('signed out, it is not served', byNobody.status === 401, describe(byNobody));
+  }
+
+  /* ---- a member photograph ---- */
+
+  const myMemberId = member.user?.memberId;
+  if (myMemberId) {
+    const photoPath = await OBJECT('member-photos');
+    const setPhoto = await member.client.patch(`/members/${myMemberId}`, {
+      photoUrl: mediaLink(photoPath),
+    });
+    check('a photograph is kept as a private object, not a public URL',
+      setPhoto.status === 200 && setPhoto.body?.data?.photoUrl === mediaLink(photoPath),
+      { status: setPhoto.status, url: setPhoto.body?.data?.photoUrl });
+
+    const route = `/media/${photoPath}`;
+
+    const own = await member.client.get(route, asJson);
+    check('a member can see their own photograph', opened(own), describe(own));
+
+    const staff = await organizer.client.get(route, asJson);
+    check('staff can see it, because they check people in', opened(staff), describe(staff));
+
+    const nosy = await stranger.client.get(route, asJson);
+    check('another member cannot browse the register for faces',
+      nosy.status === 404, describe(nosy));
+  }
+
+  /* ---- nothing else is reachable through this door ---- */
+
+  const mediaProbes = [];
+  for (const [why, path] of [
+    ['a public folder is not exposed through the private route', `event-covers/${crypto.randomBytes(12).toString('hex')}.png`],
+    ['an unknown folder is refused', `secrets/${crypto.randomBytes(12).toString('hex')}.png`],
+    ['an object nobody owns is refused', `payment-proofs/${Date.now().toString(36)}-${crypto.randomBytes(12).toString('hex')}.png`],
+    ['a name of the wrong shape is refused', 'payment-proofs/anything.png'],
+    ['a name with an extension we never write is refused', `payment-proofs/${Date.now().toString(36)}-${crypto.randomBytes(12).toString('hex')}.svg`],
+  ]) {
+    const res = await admin.client.get(`/media/${path}`, asJson);
+    record(res, mediaProbes);
+    mediaProbes.push(res.status === 404 ? { ok: true } : { ok: false, why, status: res.status });
+  }
+  checkAll('the media route opens nothing it should not', mediaProbes);
+
+  /* Traversal is answered by the route matcher, not by the guard, so it is
+     worth confirming it never reaches the guard at all. */
+  const traversal = await admin.client.get('/media/payment-proofs/..%2F..%2Fetc%2Fpasswd', asJson);
+  check('a traversal-shaped object name resolves to nothing',
+    traversal.status === 404, describe(traversal));
 
   /* ================================================== 5. no stray 500s ==== */
 
