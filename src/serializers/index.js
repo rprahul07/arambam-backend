@@ -356,6 +356,19 @@ export const toOrganisation = (value) => ({
   paymentUpiId: value?.paymentUpiId ?? '',
   paymentQrUrl: value?.paymentQrUrl ?? '',
   paymentInstructions: value?.paymentInstructions ?? '',
+
+  mapsUrl: value?.mapsUrl ?? '',
+  directionsNote: value?.directionsNote ?? '',
+  officeDays: value?.officeDays ?? '',
+  officeHours: value?.officeHours ?? '',
+  holidayNote: value?.holidayNote ?? '',
+  responseTime: value?.responseTime ?? '',
+  registrationNumber: value?.registrationNumber ?? '',
+  foundedYear: value?.foundedYear ?? undefined,
+  instagramUrl: value?.instagramUrl ?? '',
+  facebookUrl: value?.facebookUrl ?? '',
+  whatsappUrl: value?.whatsappUrl ?? '',
+  youtubeUrl: value?.youtubeUrl ?? '',
 });
 
 export const toEmailTemplate = (row) =>

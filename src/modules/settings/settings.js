@@ -21,6 +21,9 @@ import { recordQuietly } from '../../services/activity.service.js';
 
 const router = Router();
 
+/** An external link, or nothing at all. */
+const link = z.union([z.literal(''), z.string().trim().url('That does not look like a link')]);
+
 const organisationSchema = z.object({
   name: z.string().trim().min(1, 'The organisation needs a name').max(120),
   tagline: z.string().trim().max(200).default(''),
@@ -40,6 +43,24 @@ const organisationSchema = z.object({
   paymentUpiId: z.string().trim().max(120).default(''),
   paymentQrUrl: z.string().trim().max(500).default(''),
   paymentInstructions: z.string().trim().max(1000).default(''),
+
+  /* Where and when. The map link and the note beside it are separate fields
+     because the pin lands on the building, not on the floor. */
+  mapsUrl: link.default(''),
+  directionsNote: z.string().trim().max(120).default(''),
+  officeDays: z.string().trim().max(30).default(''),
+  officeHours: z.string().trim().max(25).default(''),
+  holidayNote: z.string().trim().max(40).default(''),
+  /* Quoted publicly in several places, so it is a promise, not a hope. */
+  responseTime: z.string().trim().max(120).default(''),
+
+  registrationNumber: z.string().trim().max(120).default(''),
+  foundedYear: z.coerce.number().int().min(1900).max(2100).optional(),
+
+  instagramUrl: link.default(''),
+  facebookUrl: link.default(''),
+  whatsappUrl: link.default(''),
+  youtubeUrl: link.default(''),
 });
 
 /**

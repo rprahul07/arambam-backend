@@ -10,17 +10,52 @@
 
 /* ------------------------------------------------------------ organisation */
 
+/**
+ * The real organisation details, as supplied in "Design Corrections".
+ *
+ * Everything here is editable from the administrator's settings screen; these
+ * are the values a fresh database starts with, so a new install is correct
+ * before anyone touches it.
+ */
 export const ORGANISATION = {
   name: 'Aarambam',
-  tagline: 'Every beginning needs people around it.',
-  addressLine1: 'Aarambam Community Hall',
-  addressLine2: '18, Sastri Nagar 3rd Cross, Anna Nagar West',
-  city: 'Chennai',
+  /* Written with the symbol, as asked — not the word "Infinity". */
+  tagline: 'Zero · One · ∞',
+  addressLine1: 'Aarambam, 48, Belmont 1st Floor',
+  addressLine2: 'Upasi Road',
+  city: 'Coonoor',
   state: 'Tamil Nadu',
-  pincode: '600040',
-  email: 'hello@aarambam.org',
-  phone: '+91 44 4210 8800',
-  website: 'www.aarambam.org',
+  pincode: '643101',
+  email: 'aarambam.nilgiris@gmail.com',
+  phone: '+91 423 223 0592',
+  website: 'www.bemybuddy.in',
+
+  /* The pin drops on the Lemon Tree at street level; Aarambam is the first
+     floor of the same building, which the directions note says out loud
+     rather than leaving a visitor looking at the wrong door. */
+  mapsUrl: 'https://maps.app.goo.gl/GcCUkKZ6M9cqc3gW7?g_st=iw',
+  directionsNote: 'We are on the first floor, above Lemon Tree.',
+
+  officeDays: 'Monday – Saturday',
+  officeHours: '9am to 7pm',
+  holidayNote: 'Closed on public holidays',
+  /* Quoted publicly in three places, so it is the promise actually made. */
+  responseTime: 'within 3 hours',
+
+  registrationNumber: '80G: AADTB4839M25BL01',
+  foundedYear: 2018,
+
+  instagramUrl:
+    'https://www.instagram.com/aarambam.tn43?igsh=MTJ3MmpiaGV2M3RjeQ%3D%3D&utm_source=qr',
+  facebookUrl: 'https://www.facebook.com/share/1AswzMiaZu/',
+  whatsappUrl: '',
+  youtubeUrl: '',
+
+  /* Payment details are set by the administrator, not seeded: a QR belongs to
+     a real account and must never arrive as a default. */
+  paymentUpiId: '',
+  paymentQrUrl: '',
+  paymentInstructions: '',
 };
 
 /* --------------------------------------------------------------- categories */
