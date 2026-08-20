@@ -1215,6 +1215,45 @@ try {
   const dbHealth = await anon.get('/health/db', { absolute: true });
   check('the database health endpoint answers', dbHealth.status === 200, describe(dbHealth));
 
+  /* ======================================== 4a. stored image addresses ==== */
+
+  /* An image URL used to be written into the database with whatever origin the
+     uploading machine happened to have, so a QR uploaded from a laptop was
+     stored as `http://localhost:5000/...` and was a broken image — and a
+     mixed-content refusal — everywhere else for ever. What is stored now is a
+     path, resolved per request. These pin that down. */
+
+  section('Stored image addresses');
+
+  const { toEvent: serializeEvent } = await import('../src/serializers/index.js');
+  const resolved = (stored) => serializeEvent({ id: 'e', payment_qr_url: stored }).paymentQrUrl;
+
+  const addressCases = [
+    ['a dead localhost row is rewritten to this server',
+      'http://localhost:5000/uploads/qr/abc.png', `${env.serverUrl}/uploads/qr/abc.png`],
+    ['so is one naming a loopback address',
+      'http://127.0.0.1:5000/uploads/qr/abc.png', `${env.serverUrl}/uploads/qr/abc.png`],
+    ['a path written by local storage is made absolute',
+      'uploads/qr/abc.png', `${env.serverUrl}/uploads/qr/abc.png`],
+    ['a real remote URL is left exactly alone',
+      'https://example.supabase.co/storage/v1/object/public/b/payment-qr/x.png',
+      'https://example.supabase.co/storage/v1/object/public/b/payment-qr/x.png'],
+    ['no image stays no image', null, undefined],
+  ];
+
+  checkAll('a stored image resolves to an address that works from anywhere',
+    addressCases.map(([why, stored, want]) => {
+      const got = resolved(stored);
+      return got === want ? { ok: true } : { ok: false, why, stored, want, got };
+    }));
+
+  check('nothing served to a client points at a developer machine',
+    !addressCases.some(([, stored]) => {
+      const got = resolved(stored);
+      return typeof got === 'string' && /localhost|127\.0\.0\.1/.test(got) &&
+        !env.serverUrl.includes('localhost');
+    }), env.serverUrl);
+
   /* ============================================ 4b. private images ======== */
 
   /* Member photographs and payment screenshots are not public. They are
