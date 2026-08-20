@@ -168,7 +168,7 @@ export async function create(input, actor) {
          media_consent, declaration_accepted, status)
        VALUES (COALESCE($26::uuid, gen_random_uuid()),
                $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
-               $21,$22,$23,$24,$25,true,'pending')
+               $21,$22,$23,$24,$25,$27,'pending')
        RETURNING *`,
       [
         user.id,
@@ -197,6 +197,11 @@ export async function create(input, actor) {
         input.hasMedicalConditions ? (input.medicalNotes ?? null) : null,
         input.mediaConsent,
         input.id ?? null,
+        /* Whether they actually signed the declaration. This was written as a
+           literal `true`, which meant the record said everyone had signed
+           whatever they were asked — and made "have they signed yet?"
+           unanswerable, so the registration form it gates never opened. */
+        input.declarationAccepted ?? false,
       ],
     );
 
