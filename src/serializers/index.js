@@ -8,7 +8,7 @@
  * `if (value)`. Nothing that is not in the front-end interface is sent: no
  * password hash, no token, no internal bookkeeping column.
  */
-import { mediaUrl } from '../services/storage.service.js';
+import { mediaUrl, assetUrl, isLocalAsset } from '../services/storage.service.js';
 
 /**
  * A private image, as a link the front end can put in an `img` tag.
@@ -23,8 +23,36 @@ import { mediaUrl } from '../services/storage.service.js';
  */
 const media = (value) => {
   if (!value) return undefined;
-  if (value.startsWith('http://') || value.startsWith('https://')) return value;
+  if (isLocalAsset(value)) return assetUrl(value);
+  if (value.startsWith('http://') || value.startsWith('https://')) return image(value);
   return mediaUrl(value);
+};
+
+/**
+ * A public image, as an address that works from wherever it is being read.
+ *
+ * Three shapes are stored, for historical reasons that are worth knowing:
+ *
+ *   a Supabase URL — what production writes now, and already absolute.
+ *
+ *   `uploads/...` — a file on this server's own disk. Resolved against the
+ *     current `SERVER_URL`, so moving the server moves its images with it.
+ *
+ *   an absolute URL pointing at somebody's laptop. Rows written before the
+ *     above was true, holding `http://localhost:5000/uploads/...`. Nothing
+ *     can fetch those: on the deployed site the browser refuses them as
+ *     mixed content and then fails to connect anyway. They are rewritten to
+ *     the current server here, which at worst turns a connection error into
+ *     an honest 404, and at best — when the file really is on this server —
+ *     makes the image work again.
+ */
+const LOCAL_ORIGIN = /^https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0)(:\d+)?\//i;
+
+const image = (value) => {
+  if (!value) return undefined;
+  if (isLocalAsset(value)) return assetUrl(value);
+  if (LOCAL_ORIGIN.test(value)) return assetUrl(value.replace(LOCAL_ORIGIN, ''));
+  return value;
 };
 
 /** ISO-8601 with a `Z`, which is what `Dates are ISO-8601 strings` means here. */
@@ -84,7 +112,7 @@ export const toUser = (row, extra = {}) =>
     role: row.role,
     status: row.status,
     emailVerified: Boolean(row.email_verified),
-    avatarUrl: row.avatar_url,
+    avatarUrl: image(row.avatar_url),
     createdAt: iso(row.created_at),
     lastLoginAt: iso(row.last_login_at),
     assignedEventIds: extra.assignedEventIds,
@@ -104,7 +132,7 @@ export const toPublicUser = (row) =>
     role: row.role,
     status: row.status,
     emailVerified: true,
-    avatarUrl: row.avatar_url,
+    avatarUrl: image(row.avatar_url),
     createdAt: iso(row.created_at),
   });
 
@@ -240,7 +268,7 @@ export const toEvent = (row) =>
     summary: row.summary ?? '',
     description: row.description ?? '',
     categoryId: row.category_id,
-    coverImageUrl: row.cover_image_url,
+    coverImageUrl: image(row.cover_image_url),
 
     venueName: row.venue_name ?? '',
     venueAddress: row.venue_address ?? '',
@@ -263,7 +291,7 @@ export const toEvent = (row) =>
     organizerId: row.organizer_id,
     /* Whose QR this event's money is collected on. */
     paymentQrMode: row.payment_qr_mode ?? 'trust',
-    paymentQrUrl: row.payment_qr_url,
+    paymentQrUrl: image(row.payment_qr_url),
     createdAt: iso(row.created_at),
     publishedAt: iso(row.published_at),
     cancellationReason: row.cancellation_reason,
@@ -372,7 +400,7 @@ export const toOrganisation = (value) => ({
   phone: value?.phone ?? '',
   website: value?.website ?? '',
   paymentUpiId: value?.paymentUpiId ?? '',
-  paymentQrUrl: value?.paymentQrUrl ?? '',
+  paymentQrUrl: image(value?.paymentQrUrl) ?? '',
   paymentInstructions: value?.paymentInstructions ?? '',
 
   mapsUrl: value?.mapsUrl ?? '',

@@ -91,6 +91,22 @@ const bucketFor = (folder) =>
   isPrivateFolder(folder) ? env.supabase.privateBucket : env.supabase.bucket;
 
 /**
+ * Where multer puts each kind on the local disk.
+ *
+ * The two vocabularies differ — the bucket uses `payment-qr`, the disk uses
+ * `qr` — and they used not to be reconciled anywhere: the disk branch returned
+ * a path built from the bucket name, so the URL pointed at a directory that
+ * did not exist. Keeping the mapping here is what stops the returned path and
+ * the written file disagreeing.
+ */
+const DISK_DIR = new Map([
+  [FOLDER.EVENT, 'events'],
+  [FOLDER.MEMBER, 'members'],
+  [FOLDER.QR, 'qr'],
+  [FOLDER.PROOF, 'proofs'],
+]);
+
+/**
  * Stores one uploaded image and returns the URL to show it at.
  *
  * @param {{ buffer?: Buffer, path?: string, mimetype: string, size: number }} file
@@ -106,9 +122,23 @@ export async function store(file, folder) {
   const objectPath = `${folder}/${name}`;
 
   if (!client) {
-    /* Local disk. multer has already written the file; the URL points at the
-       static mount in app.js. */
-    return `${env.serverUrl}/uploads/${folder}/${file.filename ?? name}`;
+    /* Local disk. multer has already written the file; this is where it sits,
+       relative to the static mount in app.js.
+
+       Deliberately *not* an absolute URL. One used to be stored here, with
+       whatever `SERVER_URL` happened to be set to on the machine that did the
+       upload — which meant a file uploaded from a laptop was written into the
+       database as `http://localhost:5000/...` and stayed that way. On the
+       deployed site those rows are a broken image and a mixed-content warning,
+       because the browser is asked to fetch a plaintext localhost address from
+       an HTTPS page. Storing the path and resolving it per request means a
+       stored image follows the server rather than outliving it.
+
+       Note that a private folder is served from the same static mount here,
+       without the `/media` guard. That is only ever the case on a machine with
+       no storage keys at all, which is a developer's laptop and not a place
+       anybody's photograph lives. */
+    return `uploads/${DISK_DIR.get(folder) ?? 'events'}/${file.filename ?? name}`;
   }
 
   const body = file.buffer ?? (await fs.readFile(file.path));
@@ -160,6 +190,13 @@ export async function store(file, folder) {
  */
 export const mediaUrl = (objectPath) => `${env.serverUrl}${env.apiPrefix}/media/${objectPath}`;
 
+/** True for the relative form written by the local-disk branch above. */
+export const isLocalAsset = (value) =>
+  typeof value === 'string' && value.startsWith('uploads/');
+
+/** That relative form, resolved against wherever this server is now. */
+export const assetUrl = (value) => `${env.serverUrl}/${value}`;
+
 export function toObjectPath(value) {
   if (!value) return value;
 
@@ -208,8 +245,12 @@ export async function signedUrl(objectPath) {
 export async function remove(stored) {
   if (!client || !stored) return false;
 
-  /* Two shapes arrive here: a public URL, and the bare path kept for a
-     private object. */
+  /* Three shapes arrive here: a public URL, the bare path kept for a private
+     object, and a relative path for a file on this machine's disk. Only the
+     first two are ours to delete from a bucket. */
+  if (isLocalAsset(stored)) return false;
+
+  /* */
   let bucket = env.supabase.bucket;
   let objectPath = null;
 
@@ -232,4 +273,15 @@ export async function remove(stored) {
   return true;
 }
 
-export default { store, remove, signedUrl, mediaUrl, toObjectPath, isRemote, isPrivateFolder, FOLDER };
+export default {
+  store,
+  remove,
+  signedUrl,
+  mediaUrl,
+  assetUrl,
+  isLocalAsset,
+  toObjectPath,
+  isRemote,
+  isPrivateFolder,
+  FOLDER,
+};
