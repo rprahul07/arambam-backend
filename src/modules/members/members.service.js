@@ -54,7 +54,7 @@ export const findByUserId = (userId) => queryOne(`SELECT * FROM members WHERE us
  * The next `ARM-####`. A sequence rather than `MAX(...) + 1`, so two
  * administrators saving at the same moment cannot mint the same id.
  */
-async function nextMemberCode(client) {
+export async function nextMemberCode(client) {
   const row = await client.queryOne(`SELECT nextval('member_number_seq')::int AS n`);
   return memberCode(row.n);
 }

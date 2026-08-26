@@ -1,6 +1,6 @@
 import { query, queryOne, withTransaction } from '../../database/index.js';
 import env from '../../config/env.js';
-import { ROLES } from '../../config/constants.js';
+import { MINOR_AGE, ROLES } from '../../config/constants.js';
 import ApiError from '../../utils/ApiError.js';
 import { hashPassword, verifyPassword, burnPasswordTime } from '../../utils/password.js';
 import {
@@ -14,6 +14,7 @@ import { toUser, toMember } from '../../serializers/index.js';
 import { sendTemplate } from '../../services/email.service.js';
 import { push } from '../../services/notification.service.js';
 import { recordQuietly } from '../../services/activity.service.js';
+import { nextMemberCode } from '../members/members.service.js';
 import logger from '../../utils/logger.js';
 
 /**
@@ -139,28 +140,76 @@ export const revokeAllSessions = (userId) =>
 
 /* -------------------------------------------------------------- registration */
 
-export async function register({ name, email, phone, password }, context = {}) {
-  const existing = await findUserByEmail(email);
+/**
+ * Joining: the account and the registration form, in one transaction.
+ *
+ * There is no verification step. It used to create a login, email a link, and
+ * ask for the profile afterwards — three stages, of which somebody could
+ * finish the first and never reach the third, leaving an account with no
+ * member behind it. The organisation's own process is a single form handed
+ * across a table, so this is a single submission: the questions from the paper
+ * form, plus the email and password that get them back in later.
+ *
+ * The address arrives as one field, as the form asks it, and is kept in
+ * `address_line1`. The other address columns stay for records an administrator
+ * enters through the longer form, and default to empty here.
+ *
+ * The account is created verified and a session is issued straight away — the
+ * person is signed in when this returns, and goes on to choose a plan.
+ */
+export async function register(input, context = {}) {
+  const existing = await findUserByEmail(input.email);
   if (existing) {
     // The front end shows a "that email already has an account" notice on this
     // form, so a conflict here is the designed behaviour rather than a leak.
     throw ApiError.conflict('That email address already has an account', { email: 'Already registered' }, 'EMAIL_TAKEN');
   }
 
-  const verifyToken = randomToken();
-  const user = await withTransaction(async (tx) => {
+  const isMinor = input.age < MINOR_AGE;
+
+  const { user, member } = await withTransaction(async (tx) => {
     const created = await tx.queryOne(
-      `INSERT INTO users (name, email, phone, password_hash, role, status,
-                          email_verified, email_verify_token, email_verify_expires)
-       VALUES ($1,$2,$3,$4,'member','active',false,$5,$6)
+      `INSERT INTO users (name, email, phone, password_hash, role, status, email_verified)
+       VALUES ($1,$2,$3,$4,'member','active',true)
+       RETURNING *`,
+      [input.fullName, input.email, input.phone, await hashPassword(input.password)],
+    );
+
+    const code = await nextMemberCode(tx);
+    const row = await tx.queryOne(
+      `INSERT INTO members (
+         user_id, member_id, full_name, age, gender,
+         email, phone, whatsapp_number, whatsapp_group_consent,
+         address_line1,
+         guardian_name, guardian_relation, guardian_phone,
+         id_proof_type, id_proof_number,
+         has_medical_conditions, medical_notes,
+         media_consent, declaration_accepted, status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,'pending')
        RETURNING *`,
       [
-        name,
-        email,
-        phone,
-        await hashPassword(password),
-        verifyToken,
-        new Date(Date.now() + env.security.emailVerifyTtlHours * 3600 * 1000),
+        created.id,
+        code,
+        input.fullName,
+        input.age,
+        input.gender,
+        input.email,
+        input.phone,
+        input.whatsappNumber,
+        input.whatsappGroupConsent,
+        input.address,
+        /* Only kept for a member the form actually asked them of. */
+        isMinor ? (input.guardianName ?? null) : null,
+        isMinor ? (input.guardianRelation ?? null) : null,
+        isMinor ? (input.guardianPhone ?? null) : null,
+        input.idProofType,
+        input.idProofNumber,
+        input.hasMedicalConditions,
+        input.hasMedicalConditions ? (input.medicalNotes ?? null) : null,
+        input.mediaConsent,
+        /* They ticked it on this form; the schema refuses the request without
+           it, so reaching here means it is true. */
+        input.declarationAccepted,
       ],
     );
 
@@ -169,29 +218,33 @@ export async function register({ name, email, phone, password }, context = {}) {
       userId: created.id,
       type: 'account_registered',
       title: 'Welcome to Aarambam',
-      body: 'Confirm your email address to activate your account.',
-      href: '/verify-email',
+      body: `Your member id is ${code}. Choose a membership to finish joining.`,
+      href: '/member/membership',
     });
 
-    return created;
+    return { user: created, member: row };
   });
 
-  const link = `${env.clientUrl}/verify-email?token=${verifyToken}&email=${encodeURIComponent(email)}`;
-  await sendTemplate('account_registration', email, {
-    member_name: name,
-    verification_link: link,
-  });
+  /* Sent because it is a welcome and a record of the member id, not because
+     anything waits on it. A mail failure must not undo a completed
+     registration, so it is not allowed to throw. */
+  await sendTemplate('account_registration', input.email, {
+    member_name: input.fullName,
+    member_id: member.member_id,
+    verification_link: `${env.clientUrl}/member/membership`,
+  }).catch(() => undefined);
 
   recordQuietly({
     actorId: user.id,
     subjectType: 'user',
     subjectId: user.id,
     action: 'register',
-    description: `${name} created an account`,
-    meta: { ip: context.ip },
+    description: `${input.fullName} joined and completed the registration form`,
+    meta: { ip: context.ip, memberId: member.member_id },
   });
 
-  return { user, verifyToken };
+  const tokens = await issueSession(user, context);
+  return { user, member, ...tokens };
 }
 
 /* ------------------------------------------------------------------- login */
@@ -226,14 +279,12 @@ export async function login({ email, password }, context = {}) {
     );
   }
 
-  if (!user.email_verified) {
-    throw new ApiError(
-      403,
-      'Confirm your email address before signing in.',
-      { email: user.email },
-      'EMAIL_NOT_VERIFIED',
-    );
-  }
+  /* No verification gate. Joining creates the account already verified — the
+     form and the sign-in details are one submission — so the only accounts
+     that reach here unverified are ones an administrator entered, and those
+     cannot sign in anyway until the person follows the setup link and chooses
+     a password. Refusing them a second time on a flag they were never asked
+     to clear only produced a dead end. */
 
   await query(`UPDATE users SET last_login_at = now() WHERE id = $1`, [user.id]);
   user.last_login_at = new Date();

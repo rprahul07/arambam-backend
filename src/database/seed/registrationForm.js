@@ -35,6 +35,8 @@ export const REGISTRATION_FORM = {
     proof: t('ID Proof with number', 'அடையாளச் சான்று'),
     medical: t('Medical Information', 'மருத்துவ தகவல்கள்'),
     declaration: t('Declaration', 'உறுதிமொழி'),
+    /* Shown only when joining: the form and the sign-in details are one act. */
+    account: t('Your sign-in details', 'உள்நுழைவு விவரங்கள்'),
   },
 
   fields: {
@@ -49,6 +51,18 @@ export const REGISTRATION_FORM = {
     photo: {
       label: t('Photograph', 'புகைப்படம்'),
       hint: t('Used on your membership card.', 'உங்கள் உறுப்பினர் அட்டையில் பயன்படுத்தப்படும்.'),
+    },
+    email: {
+      label: t('Email address', 'மின்னஞ்சல் முகவரி'),
+      hint: t('Your tickets and receipts are sent here.', 'உங்கள் நுழைவுச்சீட்டுகளும் ரசீதுகளும் இங்கே அனுப்பப்படும்.'),
+    },
+    password: {
+      label: t('Password', 'கடவுச்சொல்'),
+      hint: t('', ''),
+    },
+    passwordConfirm: {
+      label: t('Confirm password', 'கடவுச்சொல்லை உறுதிப்படுத்தவும்'),
+      hint: t('', ''),
     },
     fullName: {
       label: t('1. Name', 'பெயர்'),

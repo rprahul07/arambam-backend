@@ -28,20 +28,15 @@ const context = (req) => ({ userAgent: req.headers['user-agent'], ip: req.ip });
 
 /** POST /auth/register */
 export const register = asyncHandler(async (req, res) => {
-  const { user, verifyToken } = await service.register(req.body, context(req));
+  const { user, member, accessToken, refreshToken } = await service.register(req.body, context(req));
+  setRefreshCookie(res, refreshToken);
+  const payload = await service.identity(user);
+  /* Signed in on the spot. There is no verification step to wait behind, and
+     the next thing they do is choose a plan, which needs a session. */
   return created(
     res,
-    {
-      email: user.email,
-      name: user.name,
-      requiresVerification: true,
-      // Only when mail is preview-only on a non-production deployment; see
-      // `canRevealLinks` in the service.
-      verificationLink: service.canRevealLinks()
-        ? `${env.clientUrl}/verify-email?token=${verifyToken}&email=${encodeURIComponent(user.email)}`
-        : undefined,
-    },
-    'Account created. Confirm your email address to activate it.',
+    { ...payload, accessToken },
+    `Welcome to Aarambam, ${user.name.split(' ')[0]} — your member id is ${member.member_id}`,
   );
 });
 

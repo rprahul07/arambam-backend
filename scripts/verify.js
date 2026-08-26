@@ -220,26 +220,58 @@ try {
       demo.status === 200 && demo.body.data.user.role === role, demo.body);
   }
 
-  const registered = await client().post('/auth/register', {
-    name: 'Verification Tester',
-    email: `verify.${Date.now()}@example.com`,
+  /* Joining is one submission: the registration form and the sign-in details
+     together. There is no verification stage to wait behind, so what is
+     checked here is that one request leaves a member, a member id and a
+     working session behind it. */
+  const joining = {
+    email: `joiner.${Date.now()}@example.com`,
     phone: '+91 90000 11111',
     password: 'Str0ng!Pass',
-  });
-  check('registration creates an account awaiting verification',
-    registered.status === 201 && registered.body.data.requiresVerification === true, registered.body);
+    fullName: 'Verification Tester',
+    age: 34,
+    gender: 'female',
+    address: '12 Example Street, Coonoor, Tamil Nadu 643101',
+    whatsappNumber: '+91 90000 11111',
+    whatsappGroupConsent: true,
+    idProofType: 'aadhaar',
+    idProofNumber: '1234 5678 9012',
+    hasMedicalConditions: false,
+    mediaConsent: true,
+    declarationAccepted: true,
+  };
 
-  const weak = await client().post('/auth/register', {
-    name: 'Weak Password', email: `weak.${Date.now()}@example.com`,
-    phone: '+91 90000 11111', password: 'password',
-  });
+  const registered = await client().post('/auth/register', joining);
+  check('joining creates the account and the member in one request',
+    registered.status === 201 && Boolean(registered.body.data.member), registered.body);
+  check('a member id is issued on the spot',
+    /^ARM-\d+$/.test(registered.body.data?.member?.memberId ?? ''), registered.body.data?.member);
+  check('the new member is signed in without confirming anything',
+    Boolean(registered.body.data?.accessToken), Object.keys(registered.body.data ?? {}));
+  check('the form answers are on the record',
+    registered.body.data?.member?.addressLine1 === joining.address &&
+    registered.body.data?.member?.declarationAccepted === true,
+    registered.body.data?.member);
+
+  /* And they can come back tomorrow with the same details. */
+  const returning = await client().post('/auth/login',
+    { email: joining.email, password: joining.password });
+  check('they can sign in again with no verification step',
+    returning.status === 200, returning.body);
+
+  /* The paper form makes the guardian block mandatory under 18; so does this. */
+  const joiningMinor = await client().post('/auth/register',
+    { ...joining, email: `minor.${Date.now()}@example.com`, age: 12 });
+  check('a member under 18 cannot join without a guardian',
+    joiningMinor.status === 422 && Boolean(joiningMinor.body.errors?.guardianName), joiningMinor.body);
+
+  const weak = await client().post('/auth/register',
+    { ...joining, email: `weak.${Date.now()}@example.com`, password: 'password' });
   check('a weak password is rejected with field errors',
     weak.status === 422 && Boolean(weak.body.errors?.password), weak.body);
 
-  const duplicate = await client().post('/auth/register', {
-    name: 'Divya Again', email: 'divya.bharathi@gmail.com',
-    phone: '+91 90000 11111', password: 'Str0ng!Pass',
-  });
+  const duplicate = await client().post('/auth/register',
+    { ...joining, email: 'divya.bharathi@gmail.com' });
   check('a duplicate email is refused', duplicate.status === 409, duplicate.body);
 
   const forgot = await client().post('/auth/forgot-password', { email: 'nobody@example.com' });
@@ -699,8 +731,12 @@ try {
   const adminBoot = await admin.client.get('/bootstrap');
   const ad = adminBoot.body.data;
   check('scope is administrator', ad.scope === 'administrator');
+  /* At least the seeded ones, not exactly them: joining is exercised earlier
+     in this run and leaves a real member behind, exactly as it would in life.
+     The payment and event checks below already allow for the same thing. */
   check('every member is fully readable',
-    ad.members.length === seeded.members && ad.members.every((m) => m.fullName !== ''));
+    ad.members.length >= seeded.members && ad.members.every((m) => m.fullName !== ''),
+    { got: ad.members.length, seeded: seeded.members });
   check('every payment is visible', ad.payments.length >= seeded.payments);
   check('draft and cancelled events are included',
     ad.events.length >= seeded.events, { got: ad.events.length, seeded: seeded.events });

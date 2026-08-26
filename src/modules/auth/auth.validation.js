@@ -1,5 +1,11 @@
 import { z } from 'zod';
-import { ROLE_VALUES } from '../../config/constants.js';
+import {
+  GENDER_VALUES,
+  GUARDIAN_RELATION_VALUES,
+  ID_PROOF_VALUES,
+  MINOR_AGE,
+  ROLE_VALUES,
+} from '../../config/constants.js';
 import { PASSWORD_RULE } from '../../utils/password.js';
 
 /**
@@ -30,12 +36,70 @@ export const phone = z
   .trim()
   .regex(/^[+\d][\d\s-]{7,15}$/, 'Enter a valid Indian mobile number');
 
-export const registerSchema = z.object({
-  name: z.string().trim().min(2, 'Enter your full name as it appears on your ID').max(120),
-  email,
-  phone,
-  password,
-});
+/**
+ * Joining, in one submission.
+ *
+ * The account and the registration form are asked for together because they
+ * are one act: somebody joining Aarambam fills in the form the organisation
+ * has always used, and the email and password are how they get back in
+ * afterwards. Splitting it into "make an account, confirm your email, then
+ * fill in a profile" left people with an account and no membership, and a
+ * verification link standing between them and a form they had already decided
+ * to fill in.
+ *
+ * The fields below are the printed form's questions, in its order. The address
+ * is one field, as it is on paper. `GENDER_VALUES` and the rest are imported
+ * rather than restated so this cannot drift from what the database accepts.
+ */
+export const registerSchema = z
+  .object({
+    /* --- the account --- */
+    email,
+    phone,
+    password,
+
+    /* --- the form --- */
+    fullName: z.string().trim().min(2, 'Enter your name as it appears on your ID').max(120),
+    age: z.coerce.number().int().min(1, 'Enter an age').max(120),
+    gender: z.enum(GENDER_VALUES, { errorMap: () => ({ message: 'Select one' }) }),
+    address: z.string().trim().min(4, 'Enter the address').max(200),
+    whatsappNumber: phone,
+    whatsappGroupConsent: z.boolean().default(false),
+
+    guardianName: z.string().trim().max(120).optional(),
+    guardianRelation: z.enum(GUARDIAN_RELATION_VALUES).optional(),
+    guardianPhone: z
+      .string()
+      .trim()
+      .regex(/^[+\d][\d\s-]{7,15}$/, 'Enter a valid phone number')
+      .optional(),
+
+    idProofType: z.enum(ID_PROOF_VALUES),
+    idProofNumber: z.string().trim().min(4, 'Enter the number on your ID').max(40),
+
+    hasMedicalConditions: z.boolean().default(false),
+    medicalNotes: z.string().trim().max(1000).optional(),
+
+    mediaConsent: z.boolean().default(false),
+    declarationAccepted: z.literal(true, {
+      errorMap: () => ({ message: 'The declaration must be accepted to join' }),
+    }),
+  })
+  .superRefine((value, ctx) => {
+    /* The paper form makes the guardian block mandatory under 18, and so does
+       the database. Refused here as well, so the answer names the field rather
+       than arriving as a constraint the person never saw. */
+    if (value.age >= MINOR_AGE) return;
+    if (!value.guardianName || value.guardianName.length < 2) {
+      ctx.addIssue({ code: 'custom', path: ['guardianName'], message: 'Required for a member under 18' });
+    }
+    if (!value.guardianRelation) {
+      ctx.addIssue({ code: 'custom', path: ['guardianRelation'], message: 'Select the relationship' });
+    }
+    if (!value.guardianPhone) {
+      ctx.addIssue({ code: 'custom', path: ['guardianPhone'], message: 'Required for a member under 18' });
+    }
+  });
 
 export const loginSchema = z.object({
   email,

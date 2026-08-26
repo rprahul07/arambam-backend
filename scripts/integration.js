@@ -1305,19 +1305,30 @@ try {
      serializer uses, so a mismatch here would be a real mismatch. */
   const mediaLink = (objectPath) => `${env.serverUrl}${env.apiPrefix}/media/${objectPath}`;
   const asJson = { headers: { Accept: 'application/json' } };
-
-  /* An account with no membership and no business with any of this. Signing in
-     needs a confirmed address, so the confirmation is done here too. */
+  /* An account with no business with any of this. Joining is one submission
+     and the account comes out usable, so there is nothing to confirm in
+     between — the registration form's answers are supplied because the server
+     asks for them all together. */
   const strangerEmail = `stranger.${Date.now()}@example.org`;
   const registered = await anon.post('/auth/register', {
-    name: 'Passing Stranger', email: strangerEmail, phone: '9000000123', password: 'Str0ng!Pass',
+    email: strangerEmail,
+    phone: '9000000123',
+    password: 'Str0ng!Pass',
+    fullName: 'Passing Stranger',
+    age: 41,
+    gender: 'other',
+    address: '9 Bystander Lane, Coonoor',
+    whatsappNumber: '9000000123',
+    whatsappGroupConsent: false,
+    idProofType: 'aadhaar',
+    idProofNumber: '9999 8888 7777',
+    hasMedicalConditions: false,
+    mediaConsent: false,
+    declarationAccepted: true,
   });
-  const token = new URL(registered.body?.data?.verificationLink ?? 'http://x/?token=')
-    .searchParams.get('token');
-  if (token) await anon.post('/auth/verify-email', { token, email: strangerEmail });
   const stranger = await signIn(strangerEmail, 'Str0ng!Pass');
   check('a bystander account can be created to test against',
-    Boolean(stranger.user), { register: registered.status, verified: Boolean(token) });
+    Boolean(stranger.user), { register: registered.status, body: registered.body?.message });
 
   /* ---- a payment screenshot ---- */
 
