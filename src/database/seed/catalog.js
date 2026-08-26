@@ -144,74 +144,9 @@ export const categoryBySlug = (slug) => EVENT_CATEGORIES.find((c) => c.slug === 
  * here. Pricing and benefits are placeholders pending the client's Week 1
  * input and are editable from /admin/membership-plans.
  */
-export const MEMBERSHIP_PLANS = [
-  {
-    id: 'plan-basic',
-    name: 'Basic',
-    description:
-      'For anyone who wants to be on the list, come to the open events and see what Aarambam is about.',
-    price: 500,
-    durationMonths: 12,
-    benefits: [
-      'Member rate on every ticketed event',
-      'Registration opens to you 24 hours early',
-      'Digital membership card and member ID',
-      'Monthly members’ meet',
-    ],
-    active: true,
-    sortOrder: 1,
-  },
-  {
-    id: 'plan-standard',
-    name: 'Standard',
-    description:
-      'The plan most members choose. Everything in Basic, plus the workshops and courses that fill up fastest.',
-    price: 1200,
-    durationMonths: 12,
-    benefits: [
-      'Everything in Basic',
-      'Four workshop seats included each year',
-      'Registration opens to you 72 hours early',
-      'Bring one guest at member rate',
-      'Priority waitlist when an event is full',
-    ],
-    active: true,
-    recommended: true,
-    sortOrder: 2,
-  },
-  {
-    id: 'plan-premium',
-    name: 'Premium',
-    description:
-      'For members who are here most weeks — and for families who register together.',
-    price: 2500,
-    durationMonths: 12,
-    benefits: [
-      'Everything in Standard',
-      'All workshops included, no per-event fee',
-      'Two guests at member rate',
-      'Reserved seating at cultural evenings',
-      'A vote at the Annual General Meeting',
-    ],
-    active: true,
-    sortOrder: 3,
-  },
-  {
-    id: 'plan-student',
-    name: 'Student',
-    description:
-      'Concession tier for members in full-time education. Withdrawn for the current year — retained here for renewals already in force.',
-    price: 300,
-    durationMonths: 12,
-    benefits: [
-      'Member rate on every ticketed event',
-      'Youth programme access',
-      'Valid student ID required at registration',
-    ],
-    active: false,
-    sortOrder: 4,
-  },
-];
+/* The plans the organisation actually offers now live in `plans.js`, so the
+   figures people are charged sit in one file on their own. */
+export { MEMBERSHIP_PLANS } from './plans.js';
 
 export const planById = (id) => MEMBERSHIP_PLANS.find((p) => p.id === id);
 
