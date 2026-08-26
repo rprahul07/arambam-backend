@@ -14,26 +14,26 @@
  *
  *   1. members.current_subscription_id  -> NULL   (the FK does this for us)
  *   2. the subscriptions on those plans -> deleted
- *   3. their payments                   -> deleted, unless --keep-payments
+ *   3. their payments                   -> deleted
  *   4. the plans themselves             -> deleted
  *
- * A payment left behind is a successful receipt for a membership that no
- * longer exists, which is worse to hand over than no receipt at all — hence
- * deleting it by default, and the flag for anyone who disagrees.
+ * The payment goes with the subscription rather than being unlinked from it.
+ * That is not a preference: `payments_single_target` requires a membership
+ * payment to name a subscription, so a payment left behind would be nulled by
+ * the foreign key and then rejected by the check. A receipt for a membership
+ * that no longer exists is not worth keeping in any case.
  *
  * Whatever is named in `MEMBERSHIP_PLANS` is what the organisation gave us and
  * is never touched, so this stays correct if the plans change again.
  *
- *   node scripts/remove-stale-plans.js                  # show what would go
- *   node scripts/remove-stale-plans.js --write          # do it
- *   node scripts/remove-stale-plans.js --write --keep-payments
+ *   node scripts/remove-stale-plans.js            # show what would go
+ *   node scripts/remove-stale-plans.js --write    # do it
  */
 import db from '../src/database/index.js';
 import env from '../src/config/env.js';
 import { MEMBERSHIP_PLANS } from '../src/database/seed/plans.js';
 
 const write = process.argv.includes('--write');
-const keepPayments = process.argv.includes('--keep-payments');
 const line = (t = '') => process.stdout.write(`${t}\n`);
 const money = (n) => `Rs ${Number(n).toLocaleString('en-IN')}`;
 
@@ -85,15 +85,13 @@ try {
       payTotal += pays.length;
       for (const p of pays) {
         line(`      payment     ${p.reference} ${money(p.amount)} ${p.status}` +
-             `${p.receipt_no ? ` receipt ${p.receipt_no}` : ''}` +
-             `${keepPayments ? '   -> kept, unlinked' : '   -> deleted'}`);
+             `${p.receipt_no ? ` receipt ${p.receipt_no}` : ''}   -> deleted`);
       }
     }
     line();
   }
 
-  line(`${stale.length} plan(s), ${subTotal} subscription(s), ` +
-       `${payTotal} payment(s) ${keepPayments ? 'to unlink' : 'to delete'}.`);
+  line(`${stale.length} plan(s), ${subTotal} subscription(s), ${payTotal} payment(s) to delete.`);
 
   if (!write) {
     line();
@@ -108,13 +106,16 @@ try {
     for (const plan of stale) {
       const subs = await tx.queryAll(`SELECT id FROM subscriptions WHERE plan_id = $1`, [plan.id]);
       for (const s of subs) {
-        if (keepPayments) {
-          await tx.query(`UPDATE payments SET subscription_id = NULL WHERE subscription_id = $1`, [s.id]);
-        } else {
-          await tx.query(`DELETE FROM payments WHERE subscription_id = $1`, [s.id]);
-        }
-        /* Both remaining references are ON DELETE SET NULL, so the member's
-           current_subscription_id clears itself as the row goes. */
+        /* The payment has to go first, and it has to go rather than be
+           unlinked. `payments.subscription_id` is ON DELETE SET NULL, but
+           `payments_single_target` insists a membership payment *has* a
+           subscription — so leaving the payment behind would have the FK null
+           the column and the CHECK reject it, and the whole transaction would
+           roll back. A receipt for a membership that no longer exists is not
+           worth keeping anyway. */
+        await tx.query(`DELETE FROM payments WHERE subscription_id = $1`, [s.id]);
+        /* `members.current_subscription_id` is also ON DELETE SET NULL and has
+           no such CHECK behind it, so it clears itself as the row goes. */
         await tx.query(`DELETE FROM subscriptions WHERE id = $1`, [s.id]);
       }
       await tx.query(`DELETE FROM membership_plans WHERE id = $1`, [plan.id]);

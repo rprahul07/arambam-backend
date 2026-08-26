@@ -352,6 +352,16 @@ export async function seed({ fresh = true, minimal = false } = {}) {
     [JSON.stringify(ORGANISATION)],
   );
 
+  /* The registration form's wording. Seeded as an empty document rather than a
+     copy of the defaults: the serializer fills every key from
+     `REGISTRATION_FORM` anyway, and storing a copy would freeze today's
+     wording into every database, so a correction to the file would never
+     reach an installation that had already been seeded. */
+  await db.query(
+    `INSERT INTO settings (key, value) VALUES ('registration_form', '{}'::jsonb)
+     ON CONFLICT (key) DO NOTHING`,
+  );
+
   await insertMany(
     'email_templates',
     ['key', 'name', 'description', 'subject', 'body', 'enabled', 'variables', 'sort_order'],

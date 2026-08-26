@@ -13,6 +13,7 @@ import {
   toPublicUser,
   toRegistration,
   toRegistrationCounter,
+  toRegistrationForm,
   toSubscription,
   toUser,
 } from '../../serializers/index.js';
@@ -53,6 +54,13 @@ const organisationSettings = async () => {
   return toOrganisation(row?.value ?? {});
 };
 
+const registrationFormSettings = async () => {
+  const row = await queryOne(`SELECT value FROM settings WHERE key = $1`, [
+    SETTINGS_KEYS.REGISTRATION_FORM,
+  ]);
+  return toRegistrationForm(row?.value ?? {});
+};
+
 /** The accounts behind the three demonstration buttons on the sign-in screen. */
 const demoAccounts = async () => {
   const rows = await queryAll(
@@ -77,19 +85,22 @@ const demoAccounts = async () => {
 
 /** Shared by every scope: the catalogue and the organisation profile. */
 async function commonCatalogue() {
-  const [categories, plans, organisation, emailTemplates, demo] = await Promise.all([
-    queryAll(ORDERED.categories),
-    queryAll(ORDERED.plans),
-    organisationSettings(),
-    queryAll(ORDERED.templates),
-    demoAccounts(),
-  ]);
+  const [categories, plans, organisation, emailTemplates, registrationForm, demo] =
+    await Promise.all([
+      queryAll(ORDERED.categories),
+      queryAll(ORDERED.plans),
+      organisationSettings(),
+      queryAll(ORDERED.templates),
+      registrationFormSettings(),
+      demoAccounts(),
+    ]);
 
   return {
     categories: categories.map(toCategory),
     plans: plans.map(toPlan),
     organisation,
     emailTemplates: emailTemplates.map(toEmailTemplate),
+    registrationForm,
     demo,
   };
 }

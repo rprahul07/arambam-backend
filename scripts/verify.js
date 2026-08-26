@@ -372,7 +372,15 @@ try {
 
   section('Membership purchase');
 
-  const plan = md.plans.find((p) => p.active && p.name === 'Premium') ?? md.plans.find((p) => p.active);
+  /* The dearest active plan, found by price rather than by name. Naming one
+     ("Premium") is what broke this check when the organisation replaced the
+     invented plans with their own: the lookup missed, fell back to the
+     cheapest plan, and the server correctly called the result a downgrade —
+     so the upgrade assertions below failed for a reason that had nothing to do
+     with upgrades. */
+  const plan = [...md.plans]
+    .filter((p) => p.active)
+    .sort((a, b) => Number(b.price) - Number(a.price))[0];
   const heldBefore = md.subscriptions.find(
     (s) => s.memberId === memberId && s.status === 'active',
   );

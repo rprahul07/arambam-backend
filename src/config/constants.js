@@ -173,7 +173,11 @@ export const EMAIL_TEMPLATE_KEYS = [
   'event_cancellation',
 ];
 
-export const SETTINGS_KEYS = { ORGANISATION: 'organisation' };
+export const SETTINGS_KEYS = {
+  ORGANISATION: 'organisation',
+  /* The bilingual wording of the member registration form. */
+  REGISTRATION_FORM: 'registration_form',
+};
 
 /* ---------------------------------------------------------- miscellaneous */
 

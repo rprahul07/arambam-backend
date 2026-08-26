@@ -331,15 +331,36 @@ export function buildDatabase() {
     return payment;
   };
 
-  // The demonstration member: Standard, active, expiring soon enough to matter.
+  /* The demonstration member: two years on the ordinary plan, the second still
+     running and due in twenty-five days — inside the renewal-reminder window,
+     so that job has something real to act on.
+
+     She stays on Normal rather than being moved up to Patron, because Patron
+     is the dearest plan: a member sitting on the top of the list has nothing
+     to upgrade *to*, and the upgrade path is one of the things a demonstration
+     is for. She is 29, so the under-18 plan is not hers either.
+
+     The plan ids are looked up rather than assumed, and a missing one stops
+     the seed here with a name in the message. The previous version named plans
+     that no longer existed, and the failure it produced was
+     `Cannot read properties of undefined (reading 'id')` four frames away from
+     the cause, which took the whole seed — and both test suites — down with
+     it. */
   const demoHistory = [
-    { planId: 'plan-basic', startOffset: -742, kind: 'new' },
-    { planId: 'plan-basic', startOffset: -377, kind: 'renewal' },
-    { planId: 'plan-standard', startOffset: -327, kind: 'upgrade' },
+    { planId: 'plan-normal', startOffset: -705, kind: 'new' },
+    { planId: 'plan-normal', startOffset: -340, kind: 'renewal' },
   ];
 
   demoHistory.forEach((entry, index) => {
     const plan = MEMBERSHIP_PLANS.find((p) => p.id === entry.planId);
+    if (!plan) {
+      throw new Error(
+        `Seed: the demonstration history names plan "${entry.planId}", which is not in ` +
+          `MEMBERSHIP_PLANS (${MEMBERSHIP_PLANS.map((p) => p.id).join(', ')}). ` +
+          `Update src/database/seed/generate.js when the plans change.`,
+      );
+    }
+    const previous = index > 0 ? MEMBERSHIP_PLANS.find((p) => p.id === demoHistory[index - 1].planId) : undefined;
     const isCurrent = index === demoHistory.length - 1;
     const start = addDays(NOW, entry.startOffset);
     const sub = {
@@ -348,7 +369,13 @@ export function buildDatabase() {
       planId: plan.id,
       startDate: dayOf(start),
       endDate: dayOf(addMonths(start, plan.durationMonths)),
-      amount: entry.kind === 'upgrade' ? plan.price - 500 : plan.price,
+      /* An upgrade costs the difference, which is what the application
+         charges — a flat discount was a leftover from the invented prices and
+         went negative on a cheap plan. */
+      amount:
+        entry.kind === 'upgrade' && previous
+          ? Math.max(0, plan.price - previous.price)
+          : plan.price,
       status: isCurrent ? 'active' : 'expired',
       kind: entry.kind,
       createdAt: stamp(entry.startOffset, 11),

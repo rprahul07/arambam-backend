@@ -9,6 +9,7 @@
  * password hash, no token, no internal bookkeeping column.
  */
 import { mediaUrl, assetUrl, isLocalAsset } from '../services/storage.service.js';
+import { REGISTRATION_FORM } from '../database/seed/registrationForm.js';
 
 /**
  * A private image, as a link the front end can put in an `img` tag.
@@ -415,6 +416,59 @@ export const toOrganisation = (value) => ({
   facebookUrl: value?.facebookUrl ?? '',
   whatsappUrl: value?.whatsappUrl ?? '',
   youtubeUrl: value?.youtubeUrl ?? '',
+});
+
+/**
+ * The registration form's wording, with the defaults filled in behind it.
+ *
+ * A saved copy is merged over `REGISTRATION_FORM` rather than replacing it, so
+ * a field added to the code later still has wording on the day it ships —
+ * without that, adding a field would silently render a blank label on every
+ * database that had ever been edited.
+ */
+const text = (value, fallback) => ({
+  en: typeof value?.en === 'string' ? value.en : (fallback?.en ?? ''),
+  ta: typeof value?.ta === 'string' ? value.ta : (fallback?.ta ?? ''),
+});
+
+const choiceList = (value, fallback) =>
+  fallback.map((option) => {
+    /* Matched on `value`, never on position: an administrator reordering the
+       list in a saved copy must not repoint "Male" at `female`. */
+    const saved = Array.isArray(value) ? value.find((o) => o?.value === option.value) : undefined;
+    return { value: option.value, label: text(saved?.label, option.label) };
+  });
+
+export const toRegistrationForm = (value) => ({
+  title: text(value?.title, REGISTRATION_FORM.title),
+  intro: text(value?.intro, REGISTRATION_FORM.intro),
+  sections: Object.fromEntries(
+    Object.entries(REGISTRATION_FORM.sections).map(([key, fallback]) => [
+      key,
+      text(value?.sections?.[key], fallback),
+    ]),
+  ),
+  fields: Object.fromEntries(
+    Object.entries(REGISTRATION_FORM.fields).map(([key, fallback]) => [
+      key,
+      {
+        label: text(value?.fields?.[key]?.label, fallback.label),
+        hint: text(value?.fields?.[key]?.hint, fallback.hint),
+      },
+    ]),
+  ),
+  choices: Object.fromEntries(
+    Object.entries(REGISTRATION_FORM.choices).map(([key, fallback]) => [
+      key,
+      choiceList(value?.choices?.[key], fallback),
+    ]),
+  ),
+  notices: Object.fromEntries(
+    Object.entries(REGISTRATION_FORM.notices).map(([key, fallback]) => [
+      key,
+      text(value?.notices?.[key], fallback),
+    ]),
+  ),
 });
 
 export const toEmailTemplate = (row) =>

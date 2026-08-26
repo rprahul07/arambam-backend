@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { queryAll, queryOne } from '../../database/index.js';
 import { EMAIL_TEMPLATE_KEYS, SETTINGS_KEYS } from '../../config/constants.js';
-import { toEmailTemplate, toOrganisation } from '../../serializers/index.js';
+import { toEmailTemplate, toOrganisation, toRegistrationForm } from '../../serializers/index.js';
 import asyncHandler from '../../utils/asyncHandler.js';
 import ApiError from '../../utils/ApiError.js';
 import { ok } from '../../utils/response.js';
@@ -79,12 +79,67 @@ const templateSchema = z
 
 const templateKeyParam = z.object({ key: z.enum(EMAIL_TEMPLATE_KEYS) });
 
+/**
+ * The registration form's wording.
+ *
+ * Only text is accepted. The set of fields, which of them are required and
+ * what counts as a valid Aadhaar number are decided in code, so nothing here
+ * can change what the form will accept — an administrator rewording a label
+ * must never be able to loosen a rule. Anything not named below is dropped by
+ * the serializer, which merges what is saved over the supplied defaults.
+ */
+const localised = (max) =>
+  z.object({
+    en: z.string().trim().max(max).default(''),
+    ta: z.string().trim().max(max).default(''),
+  });
+
+const registrationFormSchema = z.object({
+  title: localised(200).optional(),
+  intro: localised(600).optional(),
+  sections: z.record(localised(200)).optional(),
+  fields: z
+    .record(z.object({ label: localised(300).optional(), hint: localised(600).optional() }))
+    .optional(),
+  choices: z
+    .record(
+      z.array(
+        z.object({
+          /* Carried through so the serializer can match on it. The stored
+             value is never taken from the request — see the serializer. */
+          value: z.string().trim().min(1).max(60),
+          label: localised(200),
+        }),
+      ),
+    )
+    .optional(),
+  notices: z.record(localised(3000)).optional(),
+});
+
 /** GET /settings/organisation — public: this is the footer and contact page. */
 router.get(
   '/organisation',
   asyncHandler(async (req, res) => {
     const row = await queryOne(`SELECT value FROM settings WHERE key = $1`, [SETTINGS_KEYS.ORGANISATION]);
     return ok(res, toOrganisation(row?.value ?? {}));
+  }),
+);
+
+/**
+ * GET /settings/registration-form — the wording of the member registration
+ * form, in both languages.
+ *
+ * Unauthenticated on purpose: this is the printed form's text, it is shown to
+ * somebody who has not finished joining yet, and there is nothing in it that
+ * is not already on a piece of paper handed across a table.
+ */
+router.get(
+  '/registration-form',
+  asyncHandler(async (req, res) => {
+    const row = await queryOne(`SELECT value FROM settings WHERE key = $1`, [
+      SETTINGS_KEYS.REGISTRATION_FORM,
+    ]);
+    return ok(res, toRegistrationForm(row?.value ?? {}));
   }),
 );
 
@@ -164,6 +219,39 @@ router.patch(
     });
 
     return ok(res, toEmailTemplate(row), 'Template saved');
+  }),
+);
+
+/**
+ * PUT /settings/registration-form
+ *
+ * Whole-document, not a patch: the administrator's screen holds every string
+ * at once, so sending the lot is what it actually did, and a partial merge
+ * would make "I deleted that hint" indistinguishable from "I did not touch
+ * that hint".
+ */
+router.put(
+  '/registration-form',
+  writeLimiter,
+  validateBody(registrationFormSchema),
+  asyncHandler(async (req, res) => {
+    const row = await queryOne(
+      `INSERT INTO settings (key, value, updated_by, updated_at)
+       VALUES ($1, $2::jsonb, $3, now())
+       ON CONFLICT (key) DO UPDATE
+         SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = now()
+       RETURNING value`,
+      [SETTINGS_KEYS.REGISTRATION_FORM, JSON.stringify(req.body), req.user.id],
+    );
+
+    recordQuietly({
+      actorId: req.user.id,
+      subjectType: 'settings',
+      action: 'update_registration_form',
+      description: 'Updated the member registration form wording',
+    });
+
+    return ok(res, toRegistrationForm(row.value), 'Registration form saved');
   }),
 );
 

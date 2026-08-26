@@ -209,14 +209,19 @@ router.post(
     const member = await queryOne(`SELECT * FROM members WHERE id = $1`, [memberId]);
     if (!member) throw ApiError.notFound('That member no longer exists');
 
-    let plan = await queryOne(`SELECT * FROM membership_plans WHERE id::text = $1`, [req.body.planId]);
-    if (!plan && req.body.planId.startsWith('plan-')) {
-      const nameMap = { 'plan-basic': 'Basic', 'plan-standard': 'Standard', 'plan-premium': 'Premium', 'plan-student': 'Student' };
-      const name = nameMap[req.body.planId];
-      if (name) {
-        plan = await queryOne(`SELECT * FROM membership_plans WHERE name ILIKE $1`, [`%${name}%`]);
-      }
-    }
+    /* By id, and only by id.
+       There used to be a fallback here: an id of the form `plan-standard` was
+       mapped to a plan *name* and looked up with `ILIKE '%Standard%'`, to
+       support client bundles built before the plans were real rows. It is gone
+       for two reasons. It could no longer match anything — the seed gives
+       every plan a generated uuid, so those ids have never been in the
+       database, and the four it named were retired when the organisation
+       supplied their own. And a substring match is the wrong way to decide
+       what somebody is about to be charged for: a plan called "Standard Plus"
+       would have satisfied `%Standard%` and quietly sold the wrong one. */
+    const plan = await queryOne(`SELECT * FROM membership_plans WHERE id::text = $1`, [
+      req.body.planId,
+    ]);
     if (!plan) throw ApiError.notFound('That plan no longer exists');
     if (!plan.active && !isAdmin) {
       throw ApiError.badRequest('That plan is no longer on sale', { planId: 'Not available' });

@@ -141,6 +141,7 @@ function client() {
     get: (url, options) => call('GET', url, undefined, options),
     post: (url, body, options) => call('POST', url, body ?? {}, options),
     patch: (url, body) => call('PATCH', url, body ?? {}),
+    put: (url, body) => call('PUT', url, body ?? {}),
     del: (url) => call('DELETE', url),
     call,
     setToken: (token) => {
@@ -404,6 +405,7 @@ try {
     ['POST', '/event-categories', ['administrator']],
     ['PATCH', '/settings/organisation', ['administrator']],
     ['GET', '/settings/email-templates', ['administrator']],
+    ['PUT', '/settings/registration-form', ['administrator']],
   ];
 
   const authResults = [];
@@ -615,6 +617,13 @@ try {
       valid: { outcome: 'failed' },
       fields: ['outcome', 'gatewayPaymentId', 'signature'],
       request: (body) => admin.client.post(`/payments/${aPayment.id}/settle`, body),
+    },
+    {
+      label: 'PUT /settings/registration-form',
+      schema: null,
+      valid: { title: { en: 'Member registration form', ta: 'உறுப்பினர் பதிவு படிவம்' } },
+      fields: ['title', 'intro', 'sections', 'fields', 'choices', 'notices'],
+      request: (body) => admin.client.put('/settings/registration-form', body),
     },
     {
       label: 'PATCH /settings/organisation',
@@ -1422,6 +1431,100 @@ try {
   const traversal = await admin.client.get('/media/payment-proofs/..%2F..%2Fetc%2Fpasswd', asJson);
   check('a traversal-shaped object name resolves to nothing',
     traversal.status === 404, describe(traversal));
+
+  /* ========================================= 4c. the registration form ==== */
+
+  section('Registration form wording');
+
+  {
+    /* Anyone can read it: it is shown to somebody who has not finished joining
+       yet, and it is the text of a form handed across a table on paper. */
+    const anonRead = await anon.call('GET', '/settings/registration-form');
+    check('the form wording is readable without signing in',
+      anonRead.status === 200 && Boolean(anonRead.body?.data?.fields?.fullName),
+      describe(anonRead));
+
+    const defaults = anonRead.body?.data ?? {};
+
+    check('every question carries both languages', (() => {
+      const entries = Object.entries(defaults.fields ?? {});
+      if (entries.length === 0) return false;
+      /* `hint` is allowed to be empty — not every question needs help text —
+         but a label with no wording at all would render as a blank question. */
+      return entries.every(([, field]) => field?.label?.en?.trim() && field?.label?.ta?.trim());
+    })(), Object.entries(defaults.fields ?? {})
+      .filter(([, f]) => !f?.label?.en?.trim() || !f?.label?.ta?.trim())
+      .map(([key]) => key));
+
+    check('the Tamil is the wording from the supplied form, not a placeholder',
+      defaults.fields?.fullName?.label?.ta === 'பெயர்' &&
+      defaults.fields?.address?.label?.ta === 'முகவரி' &&
+      defaults.choices?.gender?.find((c) => c.value === 'male')?.label?.ta === 'ஆண்',
+      { name: defaults.fields?.fullName?.label?.ta, address: defaults.fields?.address?.label?.ta });
+
+    check('the declaration is carried across word for word',
+      defaults.notices?.declaration?.ta?.startsWith('மேலே வழங்கியுள்ள தகவல்கள்') &&
+      defaults.notices?.declaration?.en?.startsWith('I hereby declare'),
+      defaults.notices?.declaration);
+
+    /* -- an administrator edits one label -- */
+    const edited = await admin.client.put('/settings/registration-form', {
+      fields: { fullName: { label: { en: 'Full name', ta: 'முழுப் பெயர்' } } },
+    });
+    check('an administrator can reword a question',
+      edited.status === 200 && edited.body.data.fields.fullName.label.ta === 'முழுப் பெயர்',
+      describe(edited));
+
+    check('Tamil survives the round trip byte for byte',
+      edited.body?.data?.fields?.fullName?.label?.ta === 'முழுப் பெயர்',
+      edited.body?.data?.fields?.fullName?.label);
+
+    /* The saved copy is merged over the supplied defaults, so a field the
+       administrator never touched still has wording. Without this, adding a
+       field in a later release would render blank on every installation that
+       had ever been edited. */
+    check('a question nobody edited keeps its supplied wording',
+      edited.body?.data?.fields?.age?.label?.ta === 'வயது' &&
+      edited.body?.data?.choices?.gender?.[0]?.label?.ta === 'ஆண்',
+      { age: edited.body?.data?.fields?.age?.label, gender: edited.body?.data?.choices?.gender?.[0] });
+
+    /* -- the values behind the choices are the schema's, not the caller's -- */
+    const spoofed = await admin.client.put('/settings/registration-form', {
+      choices: { gender: [{ value: 'not_a_gender', label: { en: 'Hacked', ta: 'Hacked' } }] },
+    });
+    check('a choice value the database would reject cannot be introduced',
+      spoofed.status === 200 &&
+      spoofed.body.data.choices.gender.every((c) => ['male', 'female', 'other'].includes(c.value)) &&
+      spoofed.body.data.choices.gender.length === 3,
+      spoofed.body?.data?.choices?.gender);
+
+    /* -- an over-long string is refused rather than stored -- */
+    const tooLong = await admin.client.put('/settings/registration-form', {
+      fields: { fullName: { label: { en: 'x'.repeat(400), ta: 'y' } } },
+    });
+    check('an over-long label is refused',
+      tooLong.status === 422 || tooLong.status === 400, describe(tooLong));
+
+    /* -- neither a member nor a facilitator may rewrite the form -- */
+    const memberWrite = await member.client.put('/settings/registration-form', { title: { en: 'x', ta: 'x' } });
+    const organizerWrite = await organizer.client.put('/settings/registration-form', { title: { en: 'x', ta: 'x' } });
+    check('only an administrator may change the wording',
+      memberWrite.status === 403 && organizerWrite.status === 403,
+      { member: memberWrite.status, organizer: organizerWrite.status });
+
+    /* -- put it back, so later sections and any reseed see the real wording -- */
+    const restored = await admin.client.put('/settings/registration-form', {});
+    check('clearing an edit returns the supplied wording',
+      restored.status === 200 && restored.body.data.fields.fullName.label.en === '1. Name',
+      restored.body?.data?.fields?.fullName?.label);
+
+    /* -- and it reaches the front end with everything else -- */
+    const snapshot = await member.client.get('/bootstrap');
+    check('the wording arrives in the bootstrap snapshot',
+      snapshot.status === 200 &&
+      snapshot.body.data.registrationForm?.fields?.fullName?.label?.ta === 'பெயர்',
+      Object.keys(snapshot.body?.data ?? {}));
+  }
 
   /* ================================================== 5. no stray 500s ==== */
 
