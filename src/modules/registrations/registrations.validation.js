@@ -19,6 +19,15 @@ export const cancelSchema = z.object({
   reason: z.string().trim().min(1, 'Say why the seat is being released').max(300),
 });
 
+export const markAttendanceSchema = z.object({
+  /* Optional: the gate marks today, but an organiser correcting the register
+     afterwards names the day they are correcting. */
+  sessionDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'Use a date like 2026-03-14')
+    .optional(),
+});
+
 export const attendanceSchema = z.object({
   attendance: z.enum(ATTENDANCE_VALUES),
 });

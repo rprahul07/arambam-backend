@@ -419,6 +419,69 @@ CREATE INDEX IF NOT EXISTS registrations_member_idx   ON registrations (member_i
 CREATE INDEX IF NOT EXISTS registrations_status_idx   ON registrations (status);
 CREATE INDEX IF NOT EXISTS registrations_ticket_idx   ON registrations (ticket_code);
 CREATE INDEX IF NOT EXISTS registrations_ref_idx      ON registrations (reference);
+
+-- ---------------------------------------------------------------------------
+-- MULTI-DAY EVENTS
+--
+-- An event is a range of days, not a day. A two-month course that meets every
+-- afternoon is one event with one registration and one ticket; what changes
+-- daily is whether the member turned up. `end_date` defaults to `date`, so
+-- every event that existed before this is a one-day event and nothing about
+-- it moves.
+-- ---------------------------------------------------------------------------
+ALTER TABLE events ADD COLUMN IF NOT EXISTS end_date date;
+UPDATE events SET end_date = date WHERE end_date IS NULL;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'events_date_range') THEN
+    ALTER TABLE events ADD CONSTRAINT events_date_range CHECK (end_date >= date);
+  END IF;
+END $$;
+
+-- An event with no end date is a one-day event. Done in the database rather
+-- than in each caller because there are several insert paths — the seed, the
+-- administrator's form, the tests — and "forgot to pass end_date" should mean
+-- "one day", not a constraint violation.
+CREATE OR REPLACE FUNCTION set_default_end_date() RETURNS trigger AS $$
+BEGIN
+  IF NEW.end_date IS NULL THEN
+    NEW.end_date := NEW.date;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS events_default_end_date ON events;
+CREATE TRIGGER events_default_end_date BEFORE INSERT OR UPDATE ON events
+  FOR EACH ROW EXECUTE FUNCTION set_default_end_date();
+
+-- ---------------------------------------------------------------------------
+-- ATTENDANCE — one row per member per day they actually turned up.
+--
+-- Deliberately a table rather than a column. `registrations.attendance` can
+-- answer "did they come?" once; it cannot answer "which of the forty sessions
+-- did they come to?", and that is the question a course register is for.
+--
+-- The unique index is the whole check-in guard: scanning the same ticket twice
+-- in one afternoon loses on the index rather than on a read-then-write, so two
+-- volunteers on two phones cannot both mark the same person present.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS registration_attendance (
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  registration_id uuid NOT NULL REFERENCES registrations(id) ON DELETE CASCADE,
+  -- Which day of the event this records. Always a real session date: the
+  -- check-in refuses a date outside the event's own range.
+  session_date    date NOT NULL,
+  marked_at       timestamptz NOT NULL DEFAULT now(),
+  marked_by       uuid REFERENCES users(id) ON DELETE SET NULL,
+  created_at      timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS registration_attendance_once_idx
+  ON registration_attendance (registration_id, session_date);
+CREATE INDEX IF NOT EXISTS registration_attendance_date_idx
+  ON registration_attendance (session_date);
 -- Counting occupied seats for an event is the hottest read in the product.
 CREATE INDEX IF NOT EXISTS registrations_seat_count_idx ON registrations (event_id)
   WHERE status <> 'cancelled';

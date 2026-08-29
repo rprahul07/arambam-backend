@@ -276,6 +276,10 @@ export const toEvent = (row) =>
     city: row.city ?? '',
 
     date: day(row.date),
+    /* Always present. A one-day event's end date is its start date, so the
+       interface never has to branch on "is this a range?" — it can always
+       read a range and let a one-day one collapse to a single entry. */
+    endDate: day(row.end_date ?? row.date),
     startTime: row.start_time,
     endTime: row.end_time,
 
@@ -318,6 +322,12 @@ export const toRegistration = (row) =>
     checkedInAt: iso(row.checked_in_at),
     cancelledAt: iso(row.cancelled_at),
     cancellationReason: row.cancellation_reason,
+    /* The days actually attended, when the query bothered to fetch them.
+       Omitted rather than sent empty when it did not, so "no days" and "not
+       asked for" stay distinguishable. */
+    attendedDates: Array.isArray(row.attended_dates)
+      ? row.attended_dates.filter(Boolean).map((d) => day(d))
+      : undefined,
   });
 
 /**

@@ -40,6 +40,9 @@ const base = {
   venueAddress: z.string().trim().max(400).default(''),
   city: z.string().trim().max(120).default(''),
   date: isoDate,
+  /* Optional, and defaults to the start date — an event with no end date is a
+     one-day event, which is what almost all of them are. */
+  endDate: isoDate.optional(),
   startTime: time,
   endTime: time,
   registrationOpensAt: isoDateTime,
@@ -97,6 +100,12 @@ const coherent = (schema) =>
       (v) => v.date === undefined || v.startTime === undefined || v.endTime === undefined ||
         v.endTime > v.startTime,
       { path: ['endTime'], message: 'The event has to end after it starts' },
+    )
+    /* A range that runs backwards. Caught here so the message lands on the
+       end-date field rather than arriving as a check constraint. */
+    .refine(
+      (v) => v.date === undefined || v.endDate === undefined || v.endDate >= v.date,
+      { path: ['endDate'], message: 'The last day cannot be before the first' },
     )
     /* Registration that is still open after the event has happened sells seats
        to something already over. This was only caught on the member's side,

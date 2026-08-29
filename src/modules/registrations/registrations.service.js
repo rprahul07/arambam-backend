@@ -1,4 +1,4 @@
-import { queryAll, queryOne, withTransaction } from '../../database/index.js';
+import { query, queryAll, queryOne, withTransaction } from '../../database/index.js';
 import env from '../../config/env.js';
 import {
   ATTENDANCE,
@@ -33,10 +33,18 @@ import logger from '../../utils/logger.js';
 
 export const findById = (id) => queryOne(`SELECT * FROM registrations WHERE id = $1`, [id]);
 
-/** What a member would pay right now, given whether their membership is live. */
-export const priceFor = (event, isActiveMember) => {
+/**
+ * What a member pays.
+ *
+ * There is one price now. Everyone who comes to the centre is a member — the
+ * organisation confirmed that in writing — so `non_member_price` is no longer
+ * charged to anybody. The column stays for the events already recorded against
+ * it, and the administrator's form still shows it, but nothing reads it to
+ * decide what somebody owes.
+ */
+export const priceFor = (event) => {
   if (event.type === 'free') return 0;
-  return Number(isActiveMember ? event.member_price : event.non_member_price);
+  return Number(event.member_price);
 };
 
 /**
@@ -91,10 +99,18 @@ export async function begin({ eventId, memberId, method, id, paymentId }, actor)
   );
   if (!preview) throw ApiError.notFound('That event or member no longer exists');
 
-  const expectedAmount = priceFor(
-    { type: preview.type, member_price: preview.member_price, non_member_price: preview.non_member_price },
-    preview.member_status === MEMBERSHIP_STATUS.ACTIVE,
-  );
+  /* Booking is for members. Refused here as well as in the interface, because
+     the interface is only where the button is hidden — this is where it is
+     actually enforced. */
+  if (preview.member_status !== MEMBERSHIP_STATUS.ACTIVE) {
+    throw ApiError.forbidden(
+      'Only members can book a place. Activate your membership and try again.',
+      undefined,
+      'MEMBERSHIP_REQUIRED',
+    );
+  }
+
+  const expectedAmount = priceFor({ type: preview.type, member_price: preview.member_price });
 
   const order =
     expectedAmount > 0
@@ -115,6 +131,16 @@ export async function begin({ eventId, memberId, method, id, paymentId }, actor)
 
     if (member.status === MEMBERSHIP_STATUS.SUSPENDED) {
       throw ApiError.forbidden('This membership is suspended and cannot take new bookings');
+    }
+
+    /* Re-checked inside the transaction: the membership could have lapsed
+       between the unlocked read above and this lock. */
+    if (member.status !== MEMBERSHIP_STATUS.ACTIVE) {
+      throw ApiError.forbidden(
+        'Only members can book a place. Activate your membership and try again.',
+        undefined,
+        'MEMBERSHIP_REQUIRED',
+      );
     }
 
     const counted = await tx.queryOne(
@@ -155,7 +181,7 @@ export async function begin({ eventId, memberId, method, id, paymentId }, actor)
     }
 
     const pricedAsMember = member.status === MEMBERSHIP_STATUS.ACTIVE;
-    const amount = priceFor(event, pricedAsMember);
+    const amount = priceFor(event);
     // The price changed between the unlocked read and the lock — an edit to
     // the event, or a membership that activated in between. Refuse rather than
     // charge an amount the gateway order was not opened for.
@@ -381,10 +407,117 @@ export async function checkInByCode({ eventId, code }, actor) {
   }
 
   if (registration.status === REGISTRATION_STATUS.CANCELLED) return { kind: 'cancelled', ...eventPayload };
-  if (registration.attendance === ATTENDANCE.ATTENDED) {
-    return { kind: 'already_checked_in', ...eventPayload };
+
+  /* Which day is being attended.
+   *
+   * An event is a range now, so "have they checked in?" is only answerable
+   * about a particular date. Today is the session being marked, and a scan on
+   * a day the event does not run is refused rather than filed against the
+   * nearest one — a register that quietly moves an arrival to another day is
+   * worse than one that says no. */
+  const today = new Date().toISOString().slice(0, 10);
+  const startsOn = toDateOnly(event.date);
+  const endsOn = toDateOnly(event.end_date ?? event.date);
+
+  if (today < startsOn || today > endsOn) {
+    return { kind: 'not_today', ...eventPayload, today, startsOn, endsOn };
   }
-  return { kind: 'valid', ...eventPayload };
+
+  const already = await queryOne(
+    `SELECT 1 FROM registration_attendance WHERE registration_id = $1 AND session_date = $2`,
+    [registration.id, today],
+  );
+  if (already) return { kind: 'already_checked_in', ...eventPayload, sessionDate: today };
+
+  return { kind: 'valid', ...eventPayload, sessionDate: today };
+}
+
+/** `date` columns come back as a Date from pg and a string from PGlite. */
+const toDateOnly = (value) =>
+  value instanceof Date ? value.toISOString().slice(0, 10) : String(value).slice(0, 10);
+
+/**
+ * Marks one day's arrival.
+ *
+ * The unique index on (registration_id, session_date) is what makes this safe
+ * to call twice: two volunteers scanning the same ticket at the same door in
+ * the same minute both succeed, and the register still holds one row.
+ */
+export async function markAttendance({ registrationId, sessionDate }, actor) {
+  const registration = await findById(registrationId);
+  if (!registration) throw ApiError.notFound('That registration no longer exists');
+  await assertMayManage(actor, registration, { staffOnly: true });
+
+  const event = await queryOne(`SELECT * FROM events WHERE id = $1`, [registration.event_id]);
+  if (!event) throw ApiError.notFound('That event no longer exists');
+
+  if (event.lifecycle === EVENT_LIFECYCLE.DRAFT || event.lifecycle === EVENT_LIFECYCLE.CANCELLED) {
+    throw ApiError.conflict(
+      'This event is not running, so nobody can be checked in',
+      undefined,
+      'EVENT_NOT_RUNNING',
+    );
+  }
+  if (registration.status === REGISTRATION_STATUS.CANCELLED) {
+    throw ApiError.conflict('That registration was cancelled', undefined, 'REGISTRATION_CANCELLED');
+  }
+
+  const day = sessionDate ?? new Date().toISOString().slice(0, 10);
+  if (day < toDateOnly(event.date) || day > toDateOnly(event.end_date ?? event.date)) {
+    throw ApiError.badRequest("That date is not one of this event’s sessions", {
+      sessionDate: 'Outside the event dates',
+    });
+  }
+
+  await query(
+    `INSERT INTO registration_attendance (registration_id, session_date, marked_by)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (registration_id, session_date) DO NOTHING`,
+    [registrationId, day, actor.id],
+  );
+
+  /* The single-value column stays in step for everything that still reads it —
+     a ticket shows "checked in" once somebody has attended at least one day. */
+  const row = await queryOne(
+    `UPDATE registrations
+     SET attendance = 'attended',
+         checked_in_at = COALESCE(checked_in_at, now()),
+         checked_in_by = COALESCE(checked_in_by, $2::uuid)
+     WHERE id = $1
+     RETURNING *`,
+    [registrationId, actor.id],
+  );
+
+  recordQuietly({
+    actorId: actor.id,
+    subjectType: 'registration',
+    subjectId: registrationId,
+    action: 'attendance:marked',
+    description: `${registration.participant_name} marked present on ${day}`,
+    meta: { sessionDate: day },
+  });
+
+  return { registration: toRegistration(row), sessionDate: day };
+}
+
+/** Every day each participant of an event has been marked present. */
+export async function attendanceForEvent(eventId, actor) {
+  const event = await queryOne(`SELECT * FROM events WHERE id = $1`, [eventId]);
+  if (!event) throw ApiError.notFound('That event no longer exists');
+
+  if (actor.role === ROLES.ORGANIZER && event.organizer_id !== actor.id) {
+    throw ApiError.forbidden('That is not one of your events');
+  }
+  if (actor.role === ROLES.MEMBER) throw ApiError.forbidden('Only staff can read the register');
+
+  return queryAll(
+    `SELECT a.registration_id, a.session_date, a.marked_at
+       FROM registration_attendance a
+       JOIN registrations r ON r.id = a.registration_id
+      WHERE r.event_id = $1
+      ORDER BY a.session_date`,
+    [eventId],
+  );
 }
 
 /** Members see their own; organisers see their events'; administrators, all. */

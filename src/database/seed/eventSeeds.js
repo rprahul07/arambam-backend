@@ -412,4 +412,33 @@ export const EVENT_SEEDS = [
     fill: 0.12,
     opensBefore: 55,
   },
+  {
+    /* A course rather than an occasion: one event, one registration, one
+       ticket, and a session every afternoon for eight weeks. This is what the
+       attendance register exists for — a member's ticket, the facilitator's
+       overview and the administrator's report all read the same run of days.
+
+       It starts a fortnight ago so the seeded data has sessions already behind
+       it, which is the only way the register shows anything on a fresh
+       install. */
+    slug: 'spoken-english-daily-batch-7',
+    title: 'Spoken English — Daily Batch 7',
+    summary:
+      'Every afternoon for eight weeks. Same room, same hour, and you are expected most days.',
+    description:
+      'An eight-week daily course, not a workshop you drop into.\n\nSessions run every afternoon from 16:00 to 17:30 in the learning centre. The first fortnight is pronunciation and listening; after that it is conversation practice in pairs, and a short prepared talk every Friday.\n\nAttendance is taken at the door each day. Missing the odd session is expected and nobody is removed for it, but the course only works if you come most days — the pairs are built around who is in the room.',
+    categoryId: 'cat-learning',
+    venue: VENUES.learningCentre,
+    dayOffset: -14,
+    runsForDays: 56,
+    startTime: '16:00',
+    endTime: '17:30',
+    capacity: 24,
+    type: 'paid',
+    memberPrice: 400,
+    nonMemberPrice: 400,
+    fill: 0.79,
+    opensBefore: 30,
+    lifecycle: 'published',
+  },
 ];

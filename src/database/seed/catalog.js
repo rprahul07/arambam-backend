@@ -243,7 +243,7 @@ export const EMAIL_TEMPLATES = [
       'Hello {{participant_name}},\n\n' +
       'We are sorry — {{event_title}} on {{event_date}} has been cancelled.\n\n' +
       'Reason: {{cancellation_reason}}\n\n' +
-      'If you paid for this event, the refund will be processed to your original payment method within 5–7 working days.\n\n' +
+      'If you paid for this event, your fee will be refunded. The office will be in touch to arrange it.\n\n' +
       '— Aarambam',
     enabled: true,
     variables: ['participant_name', 'event_title', 'event_date', 'cancellation_reason'],

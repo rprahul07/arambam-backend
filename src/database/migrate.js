@@ -10,6 +10,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 /** Dropped in dependency order so `--reset` works without CASCADE surprises. */
 const TABLES = [
   'activity_log',
+  'registration_attendance',
   'email_log',
   'settings',
   'email_templates',

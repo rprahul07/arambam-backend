@@ -85,16 +85,6 @@ router.get(
 );
 
 router.patch(
-  '/:id/cancel',
-  writeLimiter,
-  validateParams(schema.idParam),
-  validateBody(schema.cancelSchema),
-  asyncHandler(async (req, res) =>
-    ok(res, await service.cancel(req.params.id, req.body.reason, req.user), 'Seat released'),
-  ),
-);
-
-router.patch(
   '/:id/attendance',
   staffOnly,
   writeLimiter,
@@ -103,6 +93,61 @@ router.patch(
   asyncHandler(async (req, res) =>
     ok(res, await service.setAttendance(req.params.id, req.body.attendance, req.user), 'Attendance recorded'),
   ),
+);
+
+/**
+ * Cancelling a seat — staff only.
+ *
+ * The organisation has no cancellation policy, so a member cannot release
+ * their own place: they are told to be certain before booking, and the route
+ * that let them undo it is gone. An administrator correcting a duplicate or a
+ * booking made in error is a different act, and still has to be possible —
+ * removing it outright would leave a wrong row on the register with no way to
+ * put it right.
+ */
+router.patch(
+  '/:id/cancel',
+  staffOnly,
+  writeLimiter,
+  validateParams(schema.idParam),
+  validateBody(schema.cancelSchema),
+  asyncHandler(async (req, res) =>
+    ok(res, await service.cancel(req.params.id, req.body.reason, req.user), 'Seat released'),
+  ),
+);
+
+/**
+ * Marks one day of a multi-day event.
+ *
+ * Separate from `/attendance` because they answer different questions:
+ * `/attendance` sets the single flag on the registration, which is what the
+ * old one-day model needed, while this records that somebody was in the room
+ * on a particular date. Scanning a ticket lands here.
+ */
+router.post(
+  '/:id/attendance/mark',
+  staffOnly,
+  writeLimiter,
+  validateParams(schema.idParam),
+  validateBody(schema.markAttendanceSchema),
+  asyncHandler(async (req, res) =>
+    ok(
+      res,
+      await service.markAttendance(
+        { registrationId: req.params.id, sessionDate: req.body.sessionDate },
+        req.user,
+      ),
+      'Attendance recorded',
+    ),
+  ),
+);
+
+/** The register for one event: who was present, on which day. */
+router.get(
+  '/event/:id/attendance',
+  staffOnly,
+  validateParams(schema.idParam),
+  asyncHandler(async (req, res) => ok(res, await service.attendanceForEvent(req.params.id, req.user))),
 );
 
 export default router;

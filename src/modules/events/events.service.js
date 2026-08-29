@@ -28,6 +28,7 @@ const WRITABLE = {
   venueAddress: 'venue_address',
   city: 'city',
   date: 'date',
+  endDate: 'end_date',
   startTime: 'start_time',
   endTime: 'end_time',
   registrationOpensAt: 'registration_opens_at',
@@ -175,12 +176,12 @@ export async function create(input, user) {
 
   const row = await queryOne(
     `INSERT INTO events (id, slug, title, summary, description, category_id, cover_image_url,
-                         venue_name, venue_address, city, date, start_time, end_time,
+                         venue_name, venue_address, city, date, end_date, start_time, end_time,
                          registration_opens_at, registration_closes_at, capacity, lifecycle,
                          type, member_price, non_member_price, organizer_id, published_at,
                          payment_qr_mode, payment_qr_url)
-     VALUES (COALESCE($24::uuid, gen_random_uuid()),
-             $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
+     VALUES (COALESCE($25::uuid, gen_random_uuid()),
+             $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
      RETURNING *`,
     [
       slug,
@@ -193,6 +194,8 @@ export async function create(input, user) {
       input.venueAddress,
       input.city,
       input.date,
+      /* Null becomes the start date in the database — one day. */
+      input.endDate ?? null,
       input.startTime,
       input.endTime,
       input.registrationOpensAt,

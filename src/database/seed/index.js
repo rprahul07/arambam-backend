@@ -206,7 +206,7 @@ export async function seed({ fresh = true, minimal = false } = {}) {
     'events',
     [
       'id', 'slug', 'title', 'summary', 'description', 'category_id',
-      'venue_name', 'venue_address', 'city', 'date', 'start_time', 'end_time',
+      'venue_name', 'venue_address', 'city', 'date', 'end_date', 'start_time', 'end_time',
       'registration_opens_at', 'registration_closes_at', 'capacity', 'lifecycle',
       'type', 'member_price', 'non_member_price', 'organizer_id',
       'published_at', 'cancellation_reason', 'created_at',
@@ -222,6 +222,7 @@ export async function seed({ fresh = true, minimal = false } = {}) {
       venue_address: event.venueAddress,
       city: event.city,
       date: event.date,
+      end_date: event.endDate,
       start_time: event.startTime,
       end_time: event.endTime,
       registration_opens_at: event.registrationOpensAt,
@@ -265,6 +266,52 @@ export async function seed({ fresh = true, minimal = false } = {}) {
       created_at: registration.registeredAt,
     })),
   );
+
+  /* -------------------------------------------------- attendance register
+   *
+   * Only for events that run over several days — a one-day event's attendance
+   * is the flag on the registration and does not need a row per session.
+   *
+   * Without this the register is an empty grid on a fresh install, which makes
+   * the feature look broken rather than new. */
+  const runs = data.events.filter((event) => event.endDate && event.endDate > event.date);
+  if (runs.length > 0) {
+    const today = new Date().toISOString().slice(0, 10);
+    const rows = [];
+
+    for (const event of runs) {
+      const booked = data.registrations.filter(
+        (r) => r.eventId === event.id && r.status !== 'cancelled',
+      );
+
+      for (const registration of booked) {
+        /* A steady attender comes to most sessions; a patchy one to about
+           half. Deterministic from the registration id so a re-seed produces
+           the same register rather than a different one each time. */
+        const steady = registration.id.charCodeAt(0) % 4 !== 0;
+        const rate = steady ? 0.86 : 0.48;
+
+        for (
+          let day = new Date(`${event.date}T00:00:00Z`);
+          day.toISOString().slice(0, 10) <= event.endDate;
+          day = new Date(day.getTime() + 86400000)
+        ) {
+          const iso = day.toISOString().slice(0, 10);
+          /* Sessions that have not happened yet have no attendance — marking
+             them would be recording the future. */
+          if (iso > today) break;
+          const roll = ((registration.id.charCodeAt(2) + Number(iso.slice(8))) % 100) / 100;
+          if (roll < rate) {
+            rows.push({ registration_id: registration.id, session_date: iso });
+          }
+        }
+      }
+    }
+
+    if (rows.length > 0) {
+      await insertMany('registration_attendance', ['registration_id', 'session_date'], rows);
+    }
+  }
 
   /* ----------------------------------------------------------- payments */
 

@@ -454,7 +454,10 @@ export function buildDatabase() {
   const events = EVENT_SEEDS.map((seed) => {
     const opensBefore = seed.opensBefore ?? 30;
     const closesBefore = seed.closesBefore ?? 1;
-    const lifecycle = seed.lifecycle ?? (seed.dayOffset < 0 ? 'completed' : 'published');
+    /* Judged on the last day, so a course that started a fortnight ago and
+       runs for eight weeks is still running rather than already finished. */
+    const lastDayOffset = seed.dayOffset + (seed.runsForDays ?? 1) - 1;
+    const lifecycle = seed.lifecycle ?? (lastDayOffset < 0 ? 'completed' : 'published');
 
     // Sports and community go to Senthil; everything else to Aravind.
     const organizerId =
@@ -471,6 +474,9 @@ export function buildDatabase() {
       venueAddress: seed.venue.venueAddress,
       city: seed.venue.city,
       date: dayISO(seed.dayOffset),
+      /* `runsForDays` turns a seed into a course: one event, one ticket, and a
+         session every day. Absent means a one-day event, which is most of them. */
+      endDate: dayISO(seed.dayOffset + (seed.runsForDays ?? 1) - 1),
       startTime: seed.startTime,
       endTime: seed.endTime,
       registrationOpensAt: stamp(seed.dayOffset - opensBefore, 10),

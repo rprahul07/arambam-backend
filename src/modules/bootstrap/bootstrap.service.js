@@ -83,6 +83,25 @@ const demoAccounts = async () => {
   };
 };
 
+/**
+ * Registrations, each carrying the days that person actually turned up.
+ *
+ * Aggregated in the query rather than fetched per row: an event running daily
+ * for two months with sixty people on it is 3,600 attendance rows, and asking
+ * for them one registration at a time is what turns a register into a
+ * page-load problem.
+ */
+const REGISTRATIONS_WITH_ATTENDANCE = `
+  SELECT r.*,
+         COALESCE(
+           (SELECT array_agg(a.session_date ORDER BY a.session_date)
+              FROM registration_attendance a
+             WHERE a.registration_id = r.id),
+           '{}'
+         ) AS attended_dates
+    FROM registrations r
+   ORDER BY r.registered_at DESC`;
+
 /** Shared by every scope: the catalogue and the organisation profile. */
 async function commonCatalogue() {
   const [categories, plans, organisation, emailTemplates, registrationForm, demo] =
@@ -123,7 +142,7 @@ async function administratorScope(user) {
       queryAll(ORDERED.members),
       queryAll(`SELECT * FROM subscriptions ORDER BY created_at DESC`),
       queryAll(ORDERED.events),
-      queryAll(`SELECT * FROM registrations ORDER BY registered_at DESC`),
+      queryAll(REGISTRATIONS_WITH_ATTENDANCE),
       queryAll(`SELECT * FROM payments ORDER BY created_at DESC`),
       notificationsFor(user.id),
       queryAll(`SELECT organizer_id, id FROM events WHERE organizer_id IS NOT NULL`),
@@ -158,7 +177,7 @@ async function organizerScope(user) {
       user.id,
     ]),
     queryAll(ORDERED.members),
-    queryAll(`SELECT * FROM registrations ORDER BY registered_at DESC`),
+    queryAll(REGISTRATIONS_WITH_ATTENDANCE),
     notificationsFor(user.id),
   ]);
 
@@ -214,7 +233,7 @@ async function memberScope(user) {
     staffUsers(),
     queryAll(`SELECT id, status, joined_at FROM members ORDER BY joined_at DESC`),
     queryAll(`SELECT * FROM events WHERE lifecycle <> 'draft' ORDER BY date DESC`),
-    queryAll(`SELECT * FROM registrations ORDER BY registered_at DESC`),
+    queryAll(REGISTRATIONS_WITH_ATTENDANCE),
     notificationsFor(user.id),
   ]);
 

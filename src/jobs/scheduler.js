@@ -30,9 +30,13 @@ const holdSweep = async () => {
 /** Moves finished events and lapsed memberships into their end state. */
 const lapseSweep = async () => {
   const events = await query(
+    /* The last day, not the first. Sweeping on `date` marked a course that
+       runs daily for two months as completed on the evening of its opening
+       session, which closed registration and stopped check-in for the rest of
+       the run. */
     `UPDATE events SET lifecycle = 'completed'
      WHERE lifecycle = 'published'
-       AND (date + end_time::time) < (now() AT TIME ZONE 'UTC')
+       AND (COALESCE(end_date, date) + end_time::time) < (now() AT TIME ZONE 'UTC')
      RETURNING id`,
   );
 

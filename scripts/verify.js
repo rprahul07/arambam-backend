@@ -393,11 +393,25 @@ try {
       free.status === 201 && free.body.data.registration.status === 'confirmed' && !free.body.data.payment,
       free.body?.data);
 
+    /* There is no cancellation policy, so there is no cancellation route.
+       Checked rather than assumed: a member finding a working endpoint would
+       be releasing a seat the organisation says cannot be released. */
     const release = await member.client.patch(`/registrations/${free.body.data.registration.id}/cancel`, {
       reason: 'Verification run',
     });
-    check('a member can release their own seat',
-      release.status === 200 && release.body.data.status === 'cancelled', release.body);
+    check('a member cannot release their own seat — there is no cancellation policy',
+      release.status === 403, release.body);
+
+    /* Staff still can: correcting a duplicate or a booking taken in error is a
+       different act from a member changing their mind, and has to stay
+       possible or a wrong row is stuck on the register for good. */
+    const office = await signIn('revathi@aarambam.org');
+    const byOffice = await office.client.patch(
+      `/registrations/${free.body.data.registration.id}/cancel`,
+      { reason: 'Entered twice by mistake' },
+    );
+    check('the office can still cancel a booking made in error',
+      byOffice.status === 200 && byOffice.body.data.status === 'cancelled', byOffice.body);
   }
 
   /* ================================================ membership purchase */
@@ -607,12 +621,60 @@ try {
   );
 
   if (doorList) {
+    /* A scan is always a scan *of a particular day* now, so the event has to
+       be running today for one to resolve. Widened through the API rather than
+       the database, which also proves an administrator can turn a one-day
+       event into a run of them. */
+    const today = new Date().toISOString().slice(0, 10);
+    const nextMonth = new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10);
+    const staff = await signIn('revathi@aarambam.org');
+    const widened = await staff.client.patch(`/events/${ownEventId}`, {
+      date: today,
+      endDate: nextMonth,
+    });
+    check('an event can run across a range of days',
+      widened.status === 200 && widened.body.data.endDate === nextMonth,
+      { date: widened.body?.data?.date, endDate: widened.body?.data?.endDate });
+
+    const backwards = await staff.client.patch(`/events/${ownEventId}`, {
+      date: today, endDate: '2020-01-01',
+    });
+    check('a range that ends before it starts is refused',
+      backwards.status === 422 && Boolean(backwards.body.errors?.endDate), backwards.body?.errors);
+
     const scan = await organizer.client.post('/registrations/check-in', {
       eventId: ownEventId, code: doorList.ticketCode,
     });
     check('a valid ticket resolves at check-in',
-      scan.status === 200 && ['valid', 'already_checked_in'].includes(scan.body.data.kind),
-      scan.body?.data?.kind);
+      scan.status === 200 && scan.body.data.kind === 'valid', scan.body?.data?.kind);
+    check('the scan names the day it is marking',
+      scan.body.data.sessionDate === today, scan.body?.data?.sessionDate);
+
+    /* Marking the day, then the same day again — the second is a no-op rather
+       than a second row, which is what stops two volunteers double-marking. */
+    const marked = await organizer.client.post(`/registrations/${doorList.id}/attendance/mark`, {});
+    check('a scan marks today on the register',
+      marked.status === 200 && marked.body.data.sessionDate === today, marked.body?.data);
+
+    const rescan = await organizer.client.post('/registrations/check-in', {
+      eventId: ownEventId, code: doorList.ticketCode,
+    });
+    check('the same ticket on the same day is already checked in',
+      rescan.body.data.kind === 'already_checked_in', rescan.body?.data?.kind);
+
+    const twice = await organizer.client.post(`/registrations/${doorList.id}/attendance/mark`, {});
+    check('marking the same day twice leaves one entry', twice.status === 200, twice.body);
+
+    const outside = await organizer.client.post(`/registrations/${doorList.id}/attendance/mark`, {
+      sessionDate: '2019-05-05',
+    });
+    check('a day outside the event cannot be marked', outside.status === 400, outside.body);
+
+    const register = await organizer.client.get(`/registrations/event/${ownEventId}/attendance`);
+    const mine = (register.body.data ?? []).filter((a) => a.registrationId === doorList.id ||
+      a.registration_id === doorList.id);
+    check('the register lists exactly one day for that person',
+      register.status === 200 && mine.length === 1, { rows: mine.length, sample: register.body?.data?.[0] });
 
     const wrongEventId = od.events.find((e) => e.id !== ownEventId && ownEventIds.has(e.id))?.id;
     if (wrongEventId) {
