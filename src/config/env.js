@@ -59,6 +59,11 @@ export const env = {
     'http://127.0.0.1:4173',
   ]),
 
+  /* Where the organisation is. Every date the application decides for itself —
+     which session a scan admits, which day an attendance row belongs to — is
+     this timezone's date, not UTC's. */
+  timezone: process.env.APP_TIMEZONE || 'Asia/Kolkata',
+
   db: {
     driver: resolveDriver(),
     url: process.env.DATABASE_URL,

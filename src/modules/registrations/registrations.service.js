@@ -13,6 +13,7 @@ import {
   ROLES,
 } from '../../config/constants.js';
 import ApiError from '../../utils/ApiError.js';
+import { today as localToday, dateOnly } from '../../utils/today.js';
 import { registrationReference, ticketCode } from '../../utils/codes.js';
 import { toEvent, toPayment, toRegistration } from '../../serializers/index.js';
 import { createOrder } from '../../services/gateway.service.js';
@@ -435,7 +436,8 @@ export async function checkInByCode({ eventId, code }, actor) {
    * a day the event does not run is refused rather than filed against the
    * nearest one — a register that quietly moves an arrival to another day is
    * worse than one that says no. */
-  const today = new Date().toISOString().slice(0, 10);
+  /* The organisation's date, not UTC's — see `utils/today`. */
+  const today = localToday();
   const startsOn = toDateOnly(event.date);
   const endsOn = toDateOnly(event.end_date ?? event.date);
 
@@ -453,8 +455,7 @@ export async function checkInByCode({ eventId, code }, actor) {
 }
 
 /** `date` columns come back as a Date from pg and a string from PGlite. */
-const toDateOnly = (value) =>
-  value instanceof Date ? value.toISOString().slice(0, 10) : String(value).slice(0, 10);
+const toDateOnly = dateOnly;
 
 /**
  * Marks one day's arrival.
@@ -482,7 +483,7 @@ export async function markAttendance({ registrationId, sessionDate }, actor) {
     throw ApiError.conflict('That registration was cancelled', undefined, 'REGISTRATION_CANCELLED');
   }
 
-  const day = sessionDate ?? new Date().toISOString().slice(0, 10);
+  const day = sessionDate ?? localToday();
   if (day < toDateOnly(event.date) || day > toDateOnly(event.end_date ?? event.date)) {
     throw ApiError.badRequest("That date is not one of this event’s sessions", {
       sessionDate: 'Outside the event dates',

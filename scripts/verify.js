@@ -625,8 +625,12 @@ try {
        be running today for one to resolve. Widened through the API rather than
        the database, which also proves an administrator can turn a one-day
        event into a run of them. */
-    const today = new Date().toISOString().slice(0, 10);
-    const nextMonth = new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10);
+    /* The organisation's date, the same way the server reckons it. Using the
+       UTC date here encoded the very bug this checks for: between midnight and
+       05:30 IST the two disagree, and the test would demand the server mark
+       yesterday's session. */
+    const today = new Date().toLocaleDateString('en-CA');
+    const nextMonth = new Date(Date.now() + 30 * 864e5).toLocaleDateString('en-CA');
     const staff = await signIn('revathi@aarambam.org');
     const widened = await staff.client.patch(`/events/${ownEventId}`, {
       date: today,
