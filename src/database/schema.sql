@@ -420,6 +420,13 @@ CREATE INDEX IF NOT EXISTS registrations_status_idx   ON registrations (status);
 CREATE INDEX IF NOT EXISTS registrations_ticket_idx   ON registrations (ticket_code);
 CREATE INDEX IF NOT EXISTS registrations_ref_idx      ON registrations (reference);
 
+-- The renewal-reminder job stamps this so a member is nudged once, not nightly.
+-- It was reading `subscriptions.reminder_sent_at` while only `events` and
+-- `registrations` had the column, so the job failed every night with "column
+-- s.reminder_sent_at does not exist" and no membership renewal notice has ever
+-- been sent.
+ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS reminder_sent_at timestamptz;
+
 -- ---------------------------------------------------------------------------
 -- MULTI-DAY EVENTS
 --

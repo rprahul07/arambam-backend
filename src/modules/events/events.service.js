@@ -246,23 +246,28 @@ export async function update(id, patch, user) {
     }
   }
 
+  /* Free is free, whatever the form sent — decided *before* the assignments
+     are built rather than appended after them.
+     
+     Appending was a bug: a patch that named a price already produced
+     `member_price = $3`, and adding `member_price = 0` on top gave Postgres two
+     assignments to one column in a single UPDATE, which it refuses outright.
+     Every edit to a free event failed with a 500, whatever was being changed —
+     including simply giving it a last day. */
+  const nextType = patch.type ?? event.type;
+  const effective = nextType === 'free' ? { ...patch, memberPrice: 0, nonMemberPrice: 0 } : patch;
+
   const sets = [];
   const params = [];
   for (const [field, column] of Object.entries(WRITABLE)) {
-    if (patch[field] === undefined) continue;
-    params.push(patch[field]);
+    if (effective[field] === undefined) continue;
+    params.push(effective[field]);
     sets.push(`${column} = $${params.length}`);
   }
 
   if (patch.title) {
     params.push(await uniqueSlug(patch.title, id));
     sets.push(`slug = $${params.length}`);
-  }
-
-  // Free is free, whatever the form sent.
-  const nextType = patch.type ?? event.type;
-  if (nextType === 'free') {
-    sets.push(`member_price = 0`, `non_member_price = 0`);
   }
 
   if (patch.lifecycle === EVENT_LIFECYCLE.PUBLISHED && !event.published_at) {

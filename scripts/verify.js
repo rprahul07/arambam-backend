@@ -640,6 +640,26 @@ try {
       widened.status === 200 && widened.body.data.endDate === nextMonth,
       { date: widened.body?.data?.date, endDate: widened.body?.data?.endDate });
 
+    /* A free event, edited while its prices are in the patch. This is the
+       shape every save from the administrator's form has — the form sends the
+       prices whether or not they changed — and it used to produce two
+       assignments to `member_price` in one UPDATE, which Postgres refuses. So
+       every edit to a free event answered 500, including simply giving it a
+       last day. */
+    const freeEvent = od.events.find((e) => e.type === 'free' && ownEventIds.has(e.id));
+    if (freeEvent) {
+      const freeEdit = await staff.client.patch(`/events/${freeEvent.id}`, {
+        date: today,
+        endDate: nextMonth,
+        type: 'free',
+        memberPrice: 0,
+        nonMemberPrice: 0,
+      });
+      check('a free event can be given a last day',
+        freeEdit.status === 200 && freeEdit.body.data.endDate === nextMonth,
+        freeEdit.body?.message ?? freeEdit.body);
+    }
+
     const backwards = await staff.client.patch(`/events/${ownEventId}`, {
       date: today, endDate: '2020-01-01',
     });
