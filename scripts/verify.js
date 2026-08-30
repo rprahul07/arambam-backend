@@ -642,6 +642,25 @@ try {
     check('a range that ends before it starts is refused',
       backwards.status === 422 && Boolean(backwards.body.errors?.endDate), backwards.body?.errors);
 
+    /* Scanned the way the camera actually sends it — the whole QR payload,
+       `AARAMBAM:<code>:<eventId>`, not the bare code. Every earlier test typed
+       the code by hand, which is why a server that could not read the payload
+       passed all of them and still failed at a real door. */
+    const scanned = await organizer.client.post('/registrations/check-in', {
+      eventId: ownEventId,
+      code: `AARAMBAM:${doorList.ticketCode}:${ownEventId}`,
+    });
+    check('a QR payload from the camera resolves',
+      scanned.status === 200 && scanned.body.data.kind === 'valid', scanned.body?.data);
+
+    /* A payload whose code and event have been separated is doctored. */
+    const doctored = await organizer.client.post('/registrations/check-in', {
+      eventId: ownEventId,
+      code: `AARAMBAM:${doorList.ticketCode}:00000000-0000-0000-0000-000000000000`,
+    });
+    check('a payload naming the wrong event is refused',
+      doctored.body?.data?.kind === 'invalid', doctored.body);
+
     const scan = await organizer.client.post('/registrations/check-in', {
       eventId: ownEventId, code: doorList.ticketCode,
     });

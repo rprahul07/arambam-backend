@@ -378,7 +378,21 @@ export async function setAttendance(id, attendance, actor) {
  * interface never has to guess what a result means.
  */
 export async function checkInByCode({ eventId, code }, actor) {
-  const normalised = code.trim().toUpperCase().replace(/[\s-]/g, '');
+  /* Two different things arrive here and they do not look alike.
+   *
+   *   typed at the desk : the bare ticket code, "V2MXDJG8"
+   *   read by a camera  : the whole QR payload, "AARAMBAM:<code>:<eventId>"
+   *
+   * Stripping separators and matching the entire payload against `ticket_code`
+   * could never match, so every camera scan came back "code not recognised"
+   * while typing the same code by hand worked — which reads as the scanner
+   * being broken rather than the server not understanding what it sent. */
+  const raw = String(code).trim();
+  const parts = raw.toUpperCase().startsWith('AARAMBAM:') ? raw.split(':') : null;
+  const scannedCode = parts ? (parts[1] ?? '') : raw;
+  const scannedEventId = parts ? (parts[2] ?? '').trim() : '';
+
+  const normalised = scannedCode.trim().toUpperCase().replace(/[\s-]/g, '');
 
   const registration = await queryOne(
     `SELECT * FROM registrations
@@ -392,6 +406,12 @@ export async function checkInByCode({ eventId, code }, actor) {
   await assertMayManage(actor, registration, { staffOnly: true });
 
   const payload = { registration: toRegistration(registration) };
+
+  /* The event inside the QR has to agree with the registration it names. A
+     payload whose code and event have been separated is a doctored one. */
+  if (scannedEventId && scannedEventId.toLowerCase() !== String(registration.event_id).toLowerCase()) {
+    return { kind: 'invalid', code };
+  }
 
   if (registration.event_id !== eventId) {
     return { kind: 'wrong_event', ...payload, ticketEvent: toEvent(event) };

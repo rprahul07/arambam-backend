@@ -34,7 +34,11 @@ export const attendanceSchema = z.object({
 
 export const checkInSchema = z.object({
   eventId: z.string().uuid('Choose an event'),
-  code: z.string().trim().min(4, 'Enter a ticket code').max(40),
+  /* Long enough for the whole QR payload, not just the bare code:
+     "AARAMBAM:<8-char code>:<36-char uuid>" is 54 characters, and the old cap
+     of 40 refused every camera scan with a validation error before the
+     resolver ever saw it. */
+  code: z.string().trim().min(4, 'Enter a ticket code').max(200),
 });
 
 export const listSchema = z.object({
