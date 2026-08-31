@@ -528,6 +528,56 @@ export async function markAttendance({ registrationId, sessionDate }, actor) {
  * and asking per event turns a page load into a request storm as the
  * programme grows.
  */
+/**
+ * Removes one day from the register.
+ *
+ * Marking is the common case and the door does it; this is the correction —
+ * somebody scanned the wrong ticket, or marked Tuesday while standing in
+ * Wednesday. Without it a mistake is permanent, and a register nobody can
+ * correct stops being trusted.
+ *
+ * The single-value column is recomputed rather than assumed: unmarking the
+ * only day a person attended has to put them back to "not checked in", and
+ * leaving `attendance = 'attended'` would contradict the register it summarises.
+ */
+export async function unmarkAttendance({ registrationId, sessionDate }, actor) {
+  const registration = await findById(registrationId);
+  if (!registration) throw ApiError.notFound('That registration no longer exists');
+  await assertMayManage(actor, registration, { staffOnly: true });
+
+  await query(
+    `DELETE FROM registration_attendance WHERE registration_id = $1 AND session_date = $2`,
+    [registrationId, sessionDate],
+  );
+
+  const remaining = await queryOne(
+    `SELECT count(*)::int AS days FROM registration_attendance WHERE registration_id = $1`,
+    [registrationId],
+  );
+  const attendance = remaining.days > 0 ? 'attended' : 'not_checked_in';
+
+  const row = await queryOne(
+    `UPDATE registrations
+        SET attendance = $2,
+            checked_in_at = CASE WHEN $2 = 'attended' THEN checked_in_at ELSE NULL END,
+            checked_in_by = CASE WHEN $2 = 'attended' THEN checked_in_by ELSE NULL END
+      WHERE id = $1
+      RETURNING *`,
+    [registrationId, attendance],
+  );
+
+  recordQuietly({
+    actorId: actor.id,
+    subjectType: 'registration',
+    subjectId: registrationId,
+    action: 'attendance:unmarked',
+    description: `${registration.participant_name} marked absent on ${sessionDate}`,
+    meta: { sessionDate },
+  });
+
+  return { registration: toRegistration(row), sessionDate };
+}
+
 export async function attendanceOverview(actor) {
   if (actor.role === ROLES.MEMBER) throw ApiError.forbidden('Only staff can read the register');
 

@@ -142,6 +142,27 @@ router.post(
   ),
 );
 
+/** Removes one day from the register — the correction to a mistaken mark. */
+/* The date is in the path rather than a body: DELETE with a body is legal but
+   quietly dropped by some proxies, and a correction that silently does nothing
+   is worse than one that 404s. */
+router.delete(
+  '/:id/attendance/:sessionDate',
+  staffOnly,
+  writeLimiter,
+  validateParams(schema.unmarkAttendanceParams),
+  asyncHandler(async (req, res) =>
+    ok(
+      res,
+      await service.unmarkAttendance(
+        { registrationId: req.params.id, sessionDate: req.params.sessionDate },
+        req.user,
+      ),
+      'Attendance removed',
+    ),
+  ),
+);
+
 /** Every event's attendance at a glance — the administrator's register list. */
 router.get(
   '/attendance/overview',

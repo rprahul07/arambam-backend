@@ -28,6 +28,13 @@ export const markAttendanceSchema = z.object({
     .optional(),
 });
 
+/* Unmarking always names the day — there is no "today" default, because a
+   correction is deliberate and guessing which day to erase is not. */
+export const unmarkAttendanceParams = z.object({
+  id: z.string().uuid('That is not a valid id'),
+  sessionDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use a date like 2026-03-14'),
+});
+
 export const attendanceSchema = z.object({
   attendance: z.enum(ATTENDANCE_VALUES),
 });

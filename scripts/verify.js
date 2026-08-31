@@ -749,6 +749,37 @@ try {
     });
     check('a day outside the event cannot be marked', outside.status === 400, outside.body);
 
+    /* Corrections. The door marks; this is the day somebody was missed, or
+       the wrong ticket was scanned. Without it a mistake is permanent. */
+    /* Yesterday, which is inside the run: the event was widened to start today
+       and end next month, so a day before today is not a session — the day
+       after is. Marking a future session is legitimate: an organiser filling
+       in the register for a class they have just taught. */
+    const otherDay = new Date(Date.now() + 864e5).toISOString().slice(0, 10);
+    const backfill = await organizer.client.post(
+      `/registrations/${doorList.id}/attendance/mark`, { sessionDate: otherDay });
+    check('a session can be marked for a day other than today', backfill.status === 200, backfill.body);
+
+    const undo = await organizer.client.del(
+      `/registrations/${doorList.id}/attendance/${otherDay}`);
+    check('a mark made in error can be removed', undo.status === 200, undo.body);
+
+    /* Removing the *only* day attended has to put them back to not checked in
+       — a summary that still says "attended" contradicts the register. */
+    const stripAll = await organizer.client.del(
+      `/registrations/${doorList.id}/attendance/${today}`);
+    check('removing the last day resets them to not checked in',
+      stripAll.status === 200 && stripAll.body.data.registration.attendance === 'not_checked_in',
+      stripAll.body?.data?.registration?.attendance);
+
+    /* Put the day back, so the register check below still has something. */
+    await organizer.client.post(`/registrations/${doorList.id}/attendance/mark`, {});
+
+    const overview = await organizer.client.get('/registrations/attendance/overview');
+    check('the register overview lists the run',
+      overview.status === 200 && overview.body.data.some((e) => e.id === ownEventId),
+      overview.body?.data?.length);
+
     const register = await organizer.client.get(`/registrations/event/${ownEventId}/attendance`);
     const mine = (register.body.data ?? []).filter((a) => a.registrationId === doorList.id ||
       a.registration_id === doorList.id);
