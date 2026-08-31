@@ -521,6 +521,64 @@ export async function markAttendance({ registrationId, sessionDate }, actor) {
   return { registration: toRegistration(row), sessionDate: day };
 }
 
+/**
+ * Attendance across every multi-day event, for the administrator's register.
+ *
+ * One query rather than one per event: the screen lists every course at once,
+ * and asking per event turns a page load into a request storm as the
+ * programme grows.
+ */
+export async function attendanceOverview(actor) {
+  if (actor.role === ROLES.MEMBER) throw ApiError.forbidden('Only staff can read the register');
+
+  const mine = actor.role === ROLES.ORGANIZER ? actor.id : null;
+
+  const events = await queryAll(
+    `SELECT e.id, e.title, e.slug, e.date, e.end_date, e.lifecycle, e.venue_name,
+            count(r.id) FILTER (WHERE r.status <> 'cancelled')::int AS booked
+       FROM events e
+       LEFT JOIN registrations r ON r.event_id = e.id
+      WHERE e.lifecycle <> 'draft'
+        AND ($1::uuid IS NULL OR e.organizer_id = $1)
+      GROUP BY e.id
+      ORDER BY e.date DESC`,
+    [mine],
+  );
+
+  const rows = await queryAll(
+    `SELECT r.event_id, a.registration_id, a.session_date
+       FROM registration_attendance a
+       JOIN registrations r ON r.id = a.registration_id
+      WHERE ($1::uuid IS NULL OR r.event_id IN (SELECT id FROM events WHERE organizer_id = $1))`,
+    [mine],
+  );
+
+  const byEvent = new Map();
+  for (const row of rows) {
+    if (!byEvent.has(row.event_id)) byEvent.set(row.event_id, []);
+    byEvent.get(row.event_id).push(row);
+  }
+
+  return events.map((event) => {
+    const marks = byEvent.get(event.id) ?? [];
+    const days = new Set(marks.map((m) => String(m.session_date).slice(0, 10)));
+    return {
+      id: event.id,
+      title: event.title,
+      slug: event.slug,
+      date: String(event.date).slice(0, 10),
+      endDate: String(event.end_date ?? event.date).slice(0, 10),
+      lifecycle: event.lifecycle,
+      venueName: event.venue_name,
+      booked: event.booked,
+      /* Total marks, and how many distinct days have any — enough for the
+         list to show "18 present across 12 sessions" without the full grid. */
+      marks: marks.length,
+      sessionsWithAttendance: days.size,
+    };
+  });
+}
+
 /** Every day each participant of an event has been marked present. */
 export async function attendanceForEvent(eventId, actor) {
   const event = await queryOne(`SELECT * FROM events WHERE id = $1`, [eventId]);

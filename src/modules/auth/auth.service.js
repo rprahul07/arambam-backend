@@ -182,10 +182,10 @@ export async function register(input, context = {}) {
          email, phone, whatsapp_number, whatsapp_group_consent,
          address_line1,
          guardian_name, guardian_relation, guardian_phone,
-         id_proof_type, id_proof_number,
+         pan_number,
          has_medical_conditions, medical_notes,
          media_consent, declaration_accepted, status)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,'pending')
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,'pending')
        RETURNING *`,
       [
         created.id,
@@ -202,8 +202,7 @@ export async function register(input, context = {}) {
         isMinor ? (input.guardianName ?? null) : null,
         isMinor ? (input.guardianRelation ?? null) : null,
         isMinor ? (input.guardianPhone ?? null) : null,
-        input.idProofType,
-        input.idProofNumber,
+        input.panNumber ?? null,
         input.hasMedicalConditions,
         input.hasMedicalConditions ? (input.medicalNotes ?? null) : null,
         input.mediaConsent,

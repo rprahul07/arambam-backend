@@ -167,9 +167,7 @@ export const toMember = (row) =>
     guardianName: row.guardian_name,
     guardianRelation: row.guardian_relation,
     guardianPhone: row.guardian_phone,
-
-    idProofType: row.id_proof_type,
-    idProofNumber: row.id_proof_number ?? '',
+    panNumber: row.pan_number ?? undefined,
 
     hasMedicalConditions: Boolean(row.has_medical_conditions),
     medicalNotes: row.medical_notes,
@@ -204,8 +202,7 @@ export const toMemberCounter = (row) => ({
   district: '',
   state: '',
   pincode: '',
-  idProofType: 'aadhaar',
-  idProofNumber: '',
+    panNumber: row.pan_number ?? undefined,
   hasMedicalConditions: false,
   mediaConsent: false,
   declarationAccepted: false,

@@ -32,7 +32,7 @@ export const REGISTRATION_FORM = {
     personal: t('Personal Information', 'தனிப்பட்ட விவரங்கள்'),
     contact: t('Contact', 'தொடர்பு விவரங்கள்'),
     guardian: t('Registration for member below 18', '18 வயதிற்குட்பட்டவருக்கான பதிவு'),
-    proof: t('ID Proof with number', 'அடையாளச் சான்று'),
+    proof: t('PAN number', 'பான் எண்'),
     medical: t('Medical Information', 'மருத்துவ தகவல்கள்'),
     declaration: t('Declaration', 'உறுதிமொழி'),
     /* Shown only when joining: the form and the sign-in details are one act. */
@@ -107,13 +107,9 @@ export const REGISTRATION_FORM = {
       label: t("Guardian's phone number", 'பாதுகாவலரின் தொலைபேசி எண்'),
       hint: t('Someone we can reach on the day of an event.', 'நிகழ்ச்சி நாளில் நாங்கள் தொடர்பு கொள்ளக்கூடிய எண்.'),
     },
-    idProofType: {
-      label: t('7. ID Proof with number', 'அடையாளச் சான்று'),
-      hint: t('', ''),
-    },
-    idProofNumber: {
-      label: t('Number on the document', 'ஆவணத்தில் உள்ள எண்'),
-      hint: t('', ''),
+    panNumber: {
+      label: t('7. PAN number', 'பான் எண்'),
+      hint: t('Optional — leave it blank if you would rather not.', 'விருப்பத்தேர்வு — விரும்பவில்லை என்றால் காலியாக விடவும்.'),
     },
     hasMedicalConditions: {
       label: t(
@@ -159,11 +155,6 @@ export const REGISTRATION_FORM = {
       { value: 'male', label: t('Male', 'ஆண்') },
       { value: 'female', label: t('Female', 'பெண்') },
       { value: 'other', label: t('Other', 'பிற') },
-    ],
-    idProofType: [
-      { value: 'aadhaar', label: t('Aadhaar', 'ஆதார்') },
-      { value: 'voter_id', label: t('Voter ID', 'வாக்காளர் அட்டை') },
-      { value: 'driving_licence', label: t('Driving Licence', 'ஓட்டுநர் உரிமம்') },
     ],
     guardianRelation: [
       { value: 'father', label: t('Father', 'தந்தை') },

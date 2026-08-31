@@ -2,7 +2,7 @@ import { z } from 'zod';
 import {
   GENDER_VALUES,
   GUARDIAN_RELATION_VALUES,
-  ID_PROOF_VALUES,
+  PAN_PATTERN,
   MINOR_AGE,
   ROLE_VALUES,
 } from '../../config/constants.js';
@@ -73,9 +73,14 @@ export const registerSchema = z
       .trim()
       .regex(/^[+\d][\d\s-]{7,15}$/, 'Enter a valid phone number')
       .optional(),
-
-    idProofType: z.enum(ID_PROOF_VALUES),
-    idProofNumber: z.string().trim().min(4, 'Enter the number on your ID').max(40),
+    /* Optional, and the only identity document the form asks for. */
+    panNumber: z
+      .string()
+      .trim()
+      .toUpperCase()
+      .refine((v) => v === '' || PAN_PATTERN.test(v), 'A PAN looks like ABCDE1234F')
+      .transform((v) => (v === '' ? undefined : v))
+      .optional(),
 
     hasMedicalConditions: z.boolean().default(false),
     medicalNotes: z.string().trim().max(1000).optional(),

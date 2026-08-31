@@ -68,13 +68,20 @@ const slugify = (value) =>
     .trim()
     .replace(/\s+/g, '.');
 
+const year = (iso) => new Date(iso).getFullYear();
+
+/** A PAN-shaped string: five letters, four digits, a letter. */
+const pan = (rng) => {
+  const letter = () => String.fromCharCode(65 + intBetween(rng, 0, 25));
+  return (
+    Array.from({ length: 5 }, letter).join('') +
+    String(intBetween(rng, 1000, 9999)) +
+    letter()
+  );
+};
+
 const phone = (rng) =>
   `+91 ${intBetween(rng, 70, 99)}${intBetween(rng, 100, 999)} ${intBetween(rng, 10000, 99999)}`;
-
-const aadhaar = (rng) =>
-  `${intBetween(rng, 2000, 9999)} ${intBetween(rng, 1000, 9999)} ${intBetween(rng, 1000, 9999)}`;
-
-const year = (iso) => new Date(iso).getFullYear();
 
 /* ========================================================================= */
 
@@ -155,8 +162,7 @@ export function buildDatabase() {
     district: demoLocality.district,
     state: 'Tamil Nadu',
     pincode: demoLocality.pincode,
-    idProofType: 'aadhaar',
-    idProofNumber: '6421 8890 3317',
+      panNumber: undefined,
     hasMedicalConditions: true,
     medicalNotes: 'Mild dust allergy — carries an inhaler.',
     mediaConsent: true,
@@ -225,12 +231,6 @@ export function buildDatabase() {
       ['suspended', 5],
     ]);
 
-    const idProofType = weighted(rng, [
-      ['aadhaar', 76],
-      ['voter_id', 16],
-      ['driving_licence', 8],
-    ]);
-
     const hasMedical = chance(rng, 0.18);
     const userId = id();
     memberNumber += 1;
@@ -255,13 +255,9 @@ export function buildDatabase() {
       guardianName: isMinor ? `${pick(rng, MALE_FIRST_NAMES)} ${last}` : undefined,
       guardianRelation: isMinor ? pick(rng, ['father', 'mother', 'guardian']) : undefined,
       guardianPhone: isMinor ? phone(rng) : undefined,
-      idProofType,
-      idProofNumber:
-        idProofType === 'aadhaar'
-          ? aadhaar(rng)
-          : idProofType === 'voter_id'
-            ? `TN/${intBetween(rng, 10, 99)}/${intBetween(rng, 100, 999)}/${intBetween(rng, 100000, 999999)}`
-            : `TN${intBetween(rng, 10, 99)} ${intBetween(rng, 20100000000, 20239999999)}`,
+      /* Optional in the form, so most people leave it blank — seeding it on
+         everybody would give a misleading picture of how often it is filled. */
+      panNumber: chance(rng, 0.35) ? pan(rng) : undefined,
       hasMedicalConditions: hasMedical,
       medicalNotes: hasMedical
         ? pick(rng, [

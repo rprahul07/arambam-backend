@@ -142,6 +142,13 @@ router.post(
   ),
 );
 
+/** Every event's attendance at a glance — the administrator's register list. */
+router.get(
+  '/attendance/overview',
+  staffOnly,
+  asyncHandler(async (req, res) => ok(res, await service.attendanceOverview(req.user))),
+);
+
 /** The register for one event: who was present, on which day. */
 router.get(
   '/event/:id/attendance',

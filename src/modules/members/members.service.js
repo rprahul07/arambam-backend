@@ -39,8 +39,7 @@ const WRITABLE = {
   guardianName: 'guardian_name',
   guardianRelation: 'guardian_relation',
   guardianPhone: 'guardian_phone',
-  idProofType: 'id_proof_type',
-  idProofNumber: 'id_proof_number',
+  panNumber: 'pan_number',
   hasMedicalConditions: 'has_medical_conditions',
   medicalNotes: 'medical_notes',
   mediaConsent: 'media_consent',
@@ -163,12 +162,12 @@ export async function create(input, actor) {
          email, phone, whatsapp_number, whatsapp_group_consent,
          address_line1, address_line2, city, district, state, pincode,
          guardian_name, guardian_relation, guardian_phone,
-         id_proof_type, id_proof_number,
+         pan_number,
          has_medical_conditions, medical_notes,
          media_consent, declaration_accepted, status)
-       VALUES (COALESCE($26::uuid, gen_random_uuid()),
+       VALUES (COALESCE($25::uuid, gen_random_uuid()),
                $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
-               $21,$22,$23,$24,$25,$27,'pending')
+               $21,$22,$23,$24,$26,'pending')
        RETURNING *`,
       [
         user.id,
@@ -191,8 +190,7 @@ export async function create(input, actor) {
         input.guardianName ?? null,
         input.guardianRelation ?? null,
         input.guardianPhone ?? null,
-        input.idProofType,
-        input.idProofNumber,
+        input.panNumber ?? null,
         input.hasMedicalConditions,
         input.hasMedicalConditions ? (input.medicalNotes ?? null) : null,
         input.mediaConsent,

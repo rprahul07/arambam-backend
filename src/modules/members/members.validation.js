@@ -1,9 +1,17 @@
 import { z } from 'zod';
+import { PAN_PATTERN } from '../../config/constants.js';
+
+/** Optional everywhere. Upper-cased first, so "abcde1234f" is accepted. */
+const panNumber = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .refine((v) => v === '' || PAN_PATTERN.test(v), 'A PAN looks like ABCDE1234F')
+  .transform((v) => (v === '' ? null : v));
 import { toObjectPath } from '../../services/storage.service.js';
 import {
   GENDER_VALUES,
   GUARDIAN_RELATION_VALUES,
-  ID_PROOF_VALUES,
   MEMBERSHIP_STATUS_VALUES,
   MINOR_AGE,
 } from '../../config/constants.js';
@@ -52,9 +60,7 @@ const profile = {
   guardianName: optionalText(120),
   guardianRelation: z.enum(GUARDIAN_RELATION_VALUES).optional(),
   guardianPhone: phone.optional(),
-
-  idProofType: z.enum(ID_PROOF_VALUES),
-  idProofNumber: z.string().trim().min(4, 'Enter the ID number').max(40),
+  panNumber: panNumber.optional(),
 
   hasMedicalConditions: z.boolean().default(false),
   medicalNotes: optionalText(1000),

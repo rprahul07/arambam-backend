@@ -145,7 +145,7 @@ export async function seed({ fresh = true, minimal = false } = {}) {
       'email', 'phone', 'whatsapp_number', 'whatsapp_group_consent',
       'address_line1', 'address_line2', 'city', 'district', 'state', 'pincode',
       'guardian_name', 'guardian_relation', 'guardian_phone',
-      'id_proof_type', 'id_proof_number', 'has_medical_conditions', 'medical_notes',
+      'pan_number', 'has_medical_conditions', 'medical_notes',
       'media_consent', 'declaration_accepted', 'status', 'joined_at', 'created_at',
     ],
     data.members.map((member) => ({
@@ -169,8 +169,7 @@ export async function seed({ fresh = true, minimal = false } = {}) {
       guardian_name: member.guardianName ?? null,
       guardian_relation: member.guardianRelation ?? null,
       guardian_phone: member.guardianPhone ?? null,
-      id_proof_type: member.idProofType,
-      id_proof_number: member.idProofNumber,
+      pan_number: member.panNumber ?? null,
       has_medical_conditions: member.hasMedicalConditions,
       medical_notes: member.medicalNotes ?? null,
       media_consent: member.mediaConsent,

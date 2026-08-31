@@ -115,9 +115,11 @@ CREATE TABLE IF NOT EXISTS members (
   guardian_phone           text,
 
   -- identity
-  id_proof_type            text NOT NULL DEFAULT 'aadhaar'
-                             CHECK (id_proof_type IN ('aadhaar','voter_id','driving_licence')),
-  id_proof_number          text NOT NULL DEFAULT '',
+  -- Optional, and the only identity document asked for. The form used to
+  -- require an Aadhaar, Voter ID or Driving Licence number; the organisation
+  -- asked for PAN alone, optional, so there is one nullable column rather than
+  -- a type and a mandatory number.
+  pan_number               text,
 
   -- medical
   has_medical_conditions   boolean NOT NULL DEFAULT false,
@@ -426,6 +428,16 @@ CREATE INDEX IF NOT EXISTS registrations_ref_idx      ON registrations (referenc
 -- s.reminder_sent_at does not exist" and no membership renewal notice has ever
 -- been sent.
 ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS reminder_sent_at timestamptz;
+
+-- Identity document: PAN only, and optional.
+--
+-- The Aadhaar / Voter ID / Driving Licence columns are dropped rather than
+-- left behind. Keeping an unused column that holds Aadhaar numbers is keeping
+-- the most sensitive thing on the record for no purpose, and the organisation
+-- asked for them to go.
+ALTER TABLE members ADD COLUMN IF NOT EXISTS pan_number text;
+ALTER TABLE members DROP COLUMN IF EXISTS id_proof_type;
+ALTER TABLE members DROP COLUMN IF EXISTS id_proof_number;
 
 -- ---------------------------------------------------------------------------
 -- MULTI-DAY EVENTS

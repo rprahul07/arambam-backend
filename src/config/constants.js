@@ -32,7 +32,15 @@ export const MEMBERSHIP_STATUS = {
 export const MEMBERSHIP_STATUS_VALUES = Object.values(MEMBERSHIP_STATUS);
 
 export const GENDER_VALUES = ['male', 'female', 'other'];
-export const ID_PROOF_VALUES = ['aadhaar', 'voter_id', 'driving_licence'];
+/**
+ * A PAN, as printed: five letters, four digits, a letter.
+ *
+ * The only identity document asked for now, and it is optional. Aadhaar, Voter
+ * ID and Driving Licence were dropped at the organisation's request — along
+ * with the numbers already collected, which is why there is no `ID_PROOF_*`
+ * here any more rather than an unused constant left behind.
+ */
+export const PAN_PATTERN = /^[A-Z]{5}[0-9]{4}[A-Z]$/;
 export const GUARDIAN_RELATION_VALUES = ['father', 'mother', 'guardian'];
 
 /** Under this age the guardian block on the registration form is required. */
