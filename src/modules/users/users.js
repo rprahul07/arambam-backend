@@ -130,21 +130,19 @@ router.patch(
 
     if (target.role === ROLES.ADMIN) await assertNotLastAdministrator(id);
 
-    // A member's profile is what makes them a member; promoting them out of
-    // the role would leave a membership nobody can act on.
-    if (target.role === ROLES.MEMBER && role !== ROLES.MEMBER) {
-      const member = await queryOne(
-        `SELECT id, status FROM members WHERE user_id = $1`,
-        [id],
-      );
-      if (member && member.status === MEMBERSHIP_STATUS.ACTIVE) {
-        throw ApiError.conflict(
-          'This account holds an active membership — suspend it before changing the role',
-          undefined,
-          'ACTIVE_MEMBERSHIP',
-        );
-      }
-    }
+    /* A membership used to block this.
+     *
+     * The reasoning was that promoting a member out of the role left "a
+     * membership nobody can act on" — which was true while the interface let
+     * an account into exactly one portal: the moment somebody became an
+     * organiser, their own tickets and renewal answered Forbidden.
+     *
+     * That is no longer so. Staff who hold a membership keep the member portal
+     * and switch between the two, so making a member an organiser now costs
+     * them nothing. Refusing the change — and telling an administrator to
+     * suspend a paid-up membership first — was asking them to break the very
+     * thing the rule was protecting.
+     */
 
     const row = await queryOne(`UPDATE users SET role = $1 WHERE id = $2 RETURNING *`, [role, id]);
 

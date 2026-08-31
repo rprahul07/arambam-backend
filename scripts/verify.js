@@ -310,6 +310,25 @@ try {
     { ...joining, email: 'divya.bharathi@gmail.com' });
   check('a duplicate email is refused', duplicate.status === 409, duplicate.body);
 
+  /* Promoting a member used to be refused outright while their membership was
+     live: "suspend it before changing the role". That protected against
+     leaving a membership nobody could act on — true when an account could
+     reach exactly one portal, and false now that staff keep the member portal
+     alongside their own. It was telling an administrator to break a paid-up
+     membership to grant a role. */
+  const roleDesk = await signIn('revathi@aarambam.org');
+  const roleBoot = (await roleDesk.client.get('/bootstrap')).body.data;
+  const liveMember = roleBoot.members.find((m) => m.status === 'active');
+  const liveUser = roleBoot.users.find((u) => u.id === liveMember.userId);
+  const promoteMember = await roleDesk.client.patch(`/users/${liveUser.id}/role`, { role: 'organizer' });
+  check('a member with a live membership can be given the organiser role',
+    promoteMember.status === 200, promoteMember.body?.message);
+  const afterPromotion = (await roleDesk.client.get('/bootstrap')).body.data.members
+    .find((m) => m.id === liveMember.id);
+  check('and the membership itself is untouched',
+    afterPromotion.status === 'active', afterPromotion.status);
+  await roleDesk.client.patch(`/users/${liveUser.id}/role`, { role: 'member' });
+
   const forgot = await client().post('/auth/forgot-password', { email: 'nobody@example.com' });
   check('password reset does not reveal whether an address exists', forgot.status === 200, forgot.body);
 
