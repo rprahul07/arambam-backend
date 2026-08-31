@@ -696,6 +696,27 @@ try {
         freeEdit.body?.message ?? freeEdit.body);
     }
 
+    /* Registration has to be allowed to stay open past the *first* day of a
+       run. Measured against the opening day, a course meeting daily for two
+       months could only accept people before its second session — which makes
+       a recurring event impossible to fill. */
+    const lateClose = await staff.client.patch(`/events/${ownEventId}`, {
+      date: today,
+      endDate: nextMonth,
+      registrationClosesAt: `${nextMonth}T20:00:00.000Z`,
+    });
+    check('registration may close on the last day of a run, not the first',
+      lateClose.status === 200, lateClose.body?.errors ?? lateClose.body?.message);
+
+    const tooLate = await staff.client.patch(`/events/${ownEventId}`, {
+      date: today,
+      endDate: nextMonth,
+      registrationClosesAt: `${new Date(Date.now() + 60 * 864e5).toISOString().slice(0, 10)}T20:00:00.000Z`,
+    });
+    check('but not after the run has finished',
+      tooLate.status === 422 && Boolean(tooLate.body.errors?.registrationClosesAt),
+      tooLate.body?.errors);
+
     const backwards = await staff.client.patch(`/events/${ownEventId}`, {
       date: today, endDate: '2020-01-01',
     });

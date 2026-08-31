@@ -107,16 +107,22 @@ const coherent = (schema) =>
       (v) => v.date === undefined || v.endDate === undefined || v.endDate >= v.date,
       { path: ['endDate'], message: 'The last day cannot be before the first' },
     )
-    /* Registration that is still open after the event has happened sells seats
+    /* Registration that is still open after the event has finished sells seats
        to something already over. This was only caught on the member's side,
-       where the event simply read as finished. */
+       where the event simply read as finished.
+       
+       Measured against the *last* day, not the first. An event is a range now,
+       and a course running daily for two months has to be able to take someone
+       who joins in week three — comparing against the opening day meant
+       registration had to close before the second session, which made a
+       recurring event impossible to fill. */
     .refine(
       (v) =>
         v.date === undefined || v.registrationClosesAt === undefined ||
-        dayOf(v.registrationClosesAt) <= v.date,
+        dayOf(v.registrationClosesAt) <= (v.endDate ?? v.date),
       {
         path: ['registrationClosesAt'],
-        message: 'Registration must close by the day the event takes place',
+        message: 'Registration must close by the last day the event runs',
       },
     );
 
