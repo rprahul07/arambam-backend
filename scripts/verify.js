@@ -254,6 +254,42 @@ try {
     registered.body.data?.member);
 
   /* And they can come back tomorrow with the same details. */
+  /* Every answer the form collects, read back off the record.
+     
+     Checked field by field rather than "did it 201?", because a field quietly
+     dropped between the form and the INSERT looks exactly like success — the
+     member is created, and nobody notices the missing WhatsApp consent until
+     somebody goes looking for it a month later. */
+  const stored = registered.body.data?.member ?? {};
+  const mismatches = Object.entries({
+    fullName: joining.fullName,
+    age: joining.age,
+    gender: joining.gender,
+    email: joining.email,
+    phone: joining.phone,
+    whatsappNumber: joining.whatsappNumber,
+    whatsappGroupConsent: joining.whatsappGroupConsent,
+    addressLine1: joining.address,
+    hasMedicalConditions: joining.hasMedicalConditions,
+    mediaConsent: joining.mediaConsent,
+    declarationAccepted: joining.declarationAccepted,
+  }).filter(([field, expected]) => stored[field] !== expected);
+  check('every answer on the form reaches the record', mismatches.length === 0,
+    mismatches.map(([f, e]) => `${f}: expected ${JSON.stringify(e)}, got ${JSON.stringify(stored[f])}`));
+
+  /* PAN is optional, so both shapes have to work. */
+  const withPan = await client().post('/auth/register',
+    { ...joining, email: `pan.${Date.now()}@example.com`, panNumber: 'abcde1234f' });
+  check('an optional PAN is stored, upper-cased',
+    withPan.body.data?.member?.panNumber === 'ABCDE1234F', withPan.body.data?.member?.panNumber);
+
+  check('a member with no PAN is accepted', !stored.panNumber, stored.panNumber);
+
+  const badPan = await client().post('/auth/register',
+    { ...joining, email: `badpan.${Date.now()}@example.com`, panNumber: 'NOTAPAN' });
+  check('a malformed PAN is refused',
+    badPan.status === 422 && Boolean(badPan.body.errors?.panNumber), badPan.body?.errors);
+
   const returning = await client().post('/auth/login',
     { email: joining.email, password: joining.password });
   check('they can sign in again with no verification step',
