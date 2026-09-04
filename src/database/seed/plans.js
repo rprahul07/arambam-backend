@@ -53,7 +53,7 @@ export const MEMBERSHIP_PLANS = [
   {
     id: 'plan-patron',
     name: 'Patron',
-    description: 'Membership for yourself, and a year of workshops for a student who could not otherwise take part.',
+    description: 'Membership for yourself, and for a student.',
     price: 3000,
     durationMonths: 12,
     benefits: [

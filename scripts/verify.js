@@ -725,6 +725,9 @@ try {
     const widened = await staff.client.patch(`/events/${ownEventId}`, {
       date: today,
       endDate: nextMonth,
+      startTime: '18:00',
+      endTime: '20:00',
+      registrationClosesAt: new Date(`${nextMonth}T20:00`).toISOString(),
     });
     check('an event can run across a range of days',
       widened.status === 200 && widened.body.data.endDate === nextMonth,
@@ -741,6 +744,11 @@ try {
       const freeEdit = await staff.client.patch(`/events/${freeEvent.id}`, {
         date: today,
         endDate: nextMonth,
+        startTime: '18:00',
+        endTime: '20:00',
+        /* Moved with the dates. Leaving the old deadline behind would strand it
+           after the new end, which is refused — correctly. */
+        registrationClosesAt: new Date(`${nextMonth}T20:00`).toISOString(),
         type: 'free',
         memberPrice: 0,
         nonMemberPrice: 0,
@@ -757,7 +765,11 @@ try {
     const lateClose = await staff.client.patch(`/events/${ownEventId}`, {
       date: today,
       endDate: nextMonth,
-      registrationClosesAt: `${nextMonth}T20:00:00.000Z`,
+      startTime: '18:00',
+      endTime: '20:00',
+      /* Built from local time, as the form does — a bare `Z` here would compare
+         20:00 UTC against 20:00 local and fail for the wrong reason. */
+      registrationClosesAt: new Date(`${nextMonth}T20:00`).toISOString(),
     });
     check('registration may close on the last day of a run, not the first',
       lateClose.status === 200, lateClose.body?.errors ?? lateClose.body?.message);
@@ -770,6 +782,38 @@ try {
     check('but not after the run has finished',
       tooLate.status === 422 && Boolean(tooLate.body.errors?.registrationClosesAt),
       tooLate.body?.errors);
+
+    /* A single day, to the minute. Registration may run right up to the moment
+       the doors close and not past it — a date-only rule let an event finishing
+       at 20:00 accept a booking at 23:00 the same evening. */
+    const oneDay = await staff.client.patch(`/events/${ownEventId}`, {
+      date: today, endDate: today, startTime: '18:00', endTime: '20:00',
+      registrationClosesAt: new Date(`${today}T20:00`).toISOString(),
+    });
+    check('a one-day event may take bookings until the moment it ends',
+      oneDay.status === 200, oneDay.body?.errors ?? oneDay.body?.message);
+
+    const pastTheEnd = await staff.client.patch(`/events/${ownEventId}`, {
+      date: today, endDate: today, startTime: '18:00', endTime: '20:00',
+      registrationClosesAt: new Date(`${today}T23:00`).toISOString(),
+    });
+    check('but not after its end time that evening',
+      pastTheEnd.status === 422 && Boolean(pastTheEnd.body.errors?.registrationClosesAt),
+      pastTheEnd.body?.errors);
+
+    /* And closing after the event has *begun* is fine — seats at the door. */
+    const midEvent = await staff.client.patch(`/events/${ownEventId}`, {
+      date: today, endDate: today, startTime: '18:00', endTime: '20:00',
+      registrationClosesAt: new Date(`${today}T19:30`).toISOString(),
+    });
+    check('registration may close after the event has started',
+      midEvent.status === 200, midEvent.body?.errors ?? midEvent.body?.message);
+
+    /* Back to the run — the session checks below need more than one day. */
+    await staff.client.patch(`/events/${ownEventId}`, {
+      date: today, endDate: nextMonth, startTime: '18:00', endTime: '20:00',
+      registrationClosesAt: new Date(`${nextMonth}T20:00`).toISOString(),
+    });
 
     const backwards = await staff.client.patch(`/events/${ownEventId}`, {
       date: today, endDate: '2020-01-01',

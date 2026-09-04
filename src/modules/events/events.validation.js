@@ -72,7 +72,13 @@ const base = {
  * is how a rule starts failing at one time of day and passing at another.
  * Comparing the calendar day of each sidesteps the whole question.
  */
-const dayOf = (isoInstant) => String(isoInstant).slice(0, 10);
+/**
+ * The instant an event finishes: its last day at its end time, as a local
+ * wall-clock reading. `new Date('2026-09-04T20:00')` is parsed as local time,
+ * and `Date.parse` of the stored UTC instant resolves to the same timeline —
+ * so comparing the two compares real moments rather than strings.
+ */
+const endsAt = (v) => Date.parse(`${v.endDate ?? v.date}T${v.endTime}`);
 const todayUtc = () => new Date().toISOString().slice(0, 10);
 
 /**
@@ -110,22 +116,26 @@ const coherent = (schema) =>
       (v) => v.date === undefined || v.endDate === undefined || v.endDate >= v.date,
       { path: ['endDate'], message: 'The last day cannot be before the first' },
     )
-    /* Registration that is still open after the event has finished sells seats
-       to something already over. This was only caught on the member's side,
-       where the event simply read as finished.
+    /* Registration may stay open right up to the moment the event finishes,
+       and not a second past it.
        
-       Measured against the *last* day, not the first. An event is a range now,
-       and a course running daily for two months has to be able to take someone
-       who joins in week three — comparing against the opening day meant
-       registration had to close before the second session, which made a
-       recurring event impossible to fill. */
+       There is deliberately no rule against closing *after it starts*. A
+       course running daily until October has to be able to take somebody who
+       joins in week three, and even a single evening can sensibly sell seats
+       at the door — so the only thing that matters is that it is still
+       running. Comparing against the opening day made a recurring event
+       impossible to fill.
+       
+       Compared to the instant the event ends, not the day: a one-day event
+       finishing at 20:00 must not accept a booking at 23:00, and a day-level
+       comparison would have allowed it. */
     .refine(
       (v) =>
-        v.date === undefined || v.registrationClosesAt === undefined ||
-        dayOf(v.registrationClosesAt) <= (v.endDate ?? v.date),
+        v.date === undefined || v.endTime === undefined || v.registrationClosesAt === undefined ||
+        Date.parse(v.registrationClosesAt) <= endsAt(v),
       {
         path: ['registrationClosesAt'],
-        message: 'Registration must close by the last day the event runs',
+        message: 'Registration cannot stay open after the event has finished',
       },
     );
 

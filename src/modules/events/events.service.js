@@ -259,6 +259,24 @@ export async function update(id, patch, user) {
      assignments to one column in a single UPDATE, which it refuses outright.
      Every edit to a free event failed with a 500, whatever was being changed —
      including simply giving it a last day. */
+  /* The registration window, checked against the event as it will be.
+   *
+   * The schema can only see what the request carried, so a patch changing the
+   * deadline alone — no dates, no times — skipped the rule entirely and could
+   * leave registration open long after the event had finished. Only the merged
+   * view knows, so it is checked here rather than there. */
+  const dayOf = (value) => String(value).slice(0, 10);
+  const closesAt = patch.registrationClosesAt ?? event.registration_closes_at;
+  if (closesAt) {
+    const lastDay = dayOf(patch.endDate ?? event.end_date ?? patch.date ?? event.date);
+    const endTime = patch.endTime ?? event.end_time;
+    if (Date.parse(closesAt) > Date.parse(`${lastDay}T${endTime}`)) {
+      throw ApiError.unprocessable('Registration cannot stay open after the event has finished', {
+        registrationClosesAt: 'After the event ends',
+      });
+    }
+  }
+
   const nextType = patch.type ?? event.type;
   const effective =
     nextType === 'free'
