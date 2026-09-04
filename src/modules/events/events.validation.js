@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { instantAt } from '../../utils/today.js';
 import { EVENT_LIFECYCLE_VALUES, EVENT_QR_MODE_VALUES, EVENT_TYPE_VALUES } from '../../config/constants.js';
 
 const time = z
@@ -73,12 +74,13 @@ const base = {
  * Comparing the calendar day of each sidesteps the whole question.
  */
 /**
- * The instant an event finishes: its last day at its end time, as a local
- * wall-clock reading. `new Date('2026-09-04T20:00')` is parsed as local time,
- * and `Date.parse` of the stored UTC instant resolves to the same timeline —
- * so comparing the two compares real moments rather than strings.
+ * The instant an event finishes: its last day at its end time, read in the
+ * organisation's own zone rather than the server's. The server runs in UTC and
+ * Aarambam is in IST, so parsing the wall-clock reading here would have made
+ * 20:00 mean 20:00 UTC — and let a deadline of 23:00 IST pass as "before the
+ * end". See `instantAt`.
  */
-const endsAt = (v) => Date.parse(`${v.endDate ?? v.date}T${v.endTime}`);
+const endsAt = (v) => instantAt(v.endDate ?? v.date, v.endTime);
 const todayUtc = () => new Date().toISOString().slice(0, 10);
 
 /**

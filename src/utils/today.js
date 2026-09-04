@@ -39,4 +39,38 @@ export const dateOnly = (value) =>
     ? new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(value)
     : String(value).slice(0, 10);
 
-export default { today, dateOnly };
+/**
+ * A wall-clock date and time where the organisation is, as a real instant.
+ *
+ * `Date.parse('2026-09-04T20:00')` is resolved in the *server's* zone, and the
+ * server is UTC while Aarambam is IST. So an event ending at 20:00 was read as
+ * 20:00 UTC — half past one in the morning locally — and a registration
+ * deadline of 23:00 IST (17:30 UTC) looked like it fell comfortably before the
+ * end. The rule that was meant to stop registration outlasting an event
+ * allowed exactly that, and only in production: on a developer's machine, set
+ * to IST, both readings agree and every test passes.
+ *
+ * The offset is derived from the zone rather than written down, so it stays
+ * right if the organisation is ever somewhere else.
+ */
+export function instantAt(day, time, timeZone = env.timezone) {
+  const naive = Date.parse(`${dateOnly(day)}T${time}:00Z`);
+  if (Number.isNaN(naive)) return Number.NaN;
+
+  /* How far the zone is from UTC at that moment: format the instant in the
+     zone, read it back as if it were UTC, and take the difference. */
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    hour12: false,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  }).formatToParts(new Date(naive));
+  const at = (type) => parts.find((part) => part.type === type).value;
+  const asIfUtc = Date.parse(
+    `${at('year')}-${at('month')}-${at('day')}T${at('hour') === '24' ? '00' : at('hour')}:${at('minute')}:${at('second')}Z`,
+  );
+
+  return naive - (asIfUtc - naive);
+}
+
+export default { today, dateOnly, instantAt };

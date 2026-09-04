@@ -62,6 +62,17 @@ function check(label, condition, context) {
 
 const BASE = `http://127.0.0.1:${env.port}${env.apiPrefix}`;
 
+/**
+ * A wall-clock time in the organisation's zone, as an instant.
+ *
+ * Written explicitly rather than via `new Date('...T20:00')`, which resolves in
+ * whatever zone the runner happens to be in. That difference is not academic:
+ * these checks passed on a developer's machine set to IST and the same code
+ * was wrong in production, where the server runs in UTC — which is exactly the
+ * bug they exist to catch. Run this suite with TZ=UTC and it still holds.
+ */
+const istInstant = (day, time) => new Date(`${day}T${time}:00+05:30`).toISOString();
+
 /** A browser-like client: keeps the refresh cookie and the access token. */
 function client() {
   const jar = new Map();
@@ -727,7 +738,7 @@ try {
       endDate: nextMonth,
       startTime: '18:00',
       endTime: '20:00',
-      registrationClosesAt: new Date(`${nextMonth}T20:00`).toISOString(),
+      registrationClosesAt: istInstant(nextMonth, '20:00'),
     });
     check('an event can run across a range of days',
       widened.status === 200 && widened.body.data.endDate === nextMonth,
@@ -748,7 +759,7 @@ try {
         endTime: '20:00',
         /* Moved with the dates. Leaving the old deadline behind would strand it
            after the new end, which is refused — correctly. */
-        registrationClosesAt: new Date(`${nextMonth}T20:00`).toISOString(),
+        registrationClosesAt: istInstant(nextMonth, '20:00'),
         type: 'free',
         memberPrice: 0,
         nonMemberPrice: 0,
@@ -769,7 +780,7 @@ try {
       endTime: '20:00',
       /* Built from local time, as the form does — a bare `Z` here would compare
          20:00 UTC against 20:00 local and fail for the wrong reason. */
-      registrationClosesAt: new Date(`${nextMonth}T20:00`).toISOString(),
+      registrationClosesAt: istInstant(nextMonth, '20:00'),
     });
     check('registration may close on the last day of a run, not the first',
       lateClose.status === 200, lateClose.body?.errors ?? lateClose.body?.message);
@@ -788,14 +799,14 @@ try {
        at 20:00 accept a booking at 23:00 the same evening. */
     const oneDay = await staff.client.patch(`/events/${ownEventId}`, {
       date: today, endDate: today, startTime: '18:00', endTime: '20:00',
-      registrationClosesAt: new Date(`${today}T20:00`).toISOString(),
+      registrationClosesAt: istInstant(today, '20:00'),
     });
     check('a one-day event may take bookings until the moment it ends',
       oneDay.status === 200, oneDay.body?.errors ?? oneDay.body?.message);
 
     const pastTheEnd = await staff.client.patch(`/events/${ownEventId}`, {
       date: today, endDate: today, startTime: '18:00', endTime: '20:00',
-      registrationClosesAt: new Date(`${today}T23:00`).toISOString(),
+      registrationClosesAt: istInstant(today, '23:00'),
     });
     check('but not after its end time that evening',
       pastTheEnd.status === 422 && Boolean(pastTheEnd.body.errors?.registrationClosesAt),
@@ -804,7 +815,7 @@ try {
     /* And closing after the event has *begun* is fine — seats at the door. */
     const midEvent = await staff.client.patch(`/events/${ownEventId}`, {
       date: today, endDate: today, startTime: '18:00', endTime: '20:00',
-      registrationClosesAt: new Date(`${today}T19:30`).toISOString(),
+      registrationClosesAt: istInstant(today, '19:30'),
     });
     check('registration may close after the event has started',
       midEvent.status === 200, midEvent.body?.errors ?? midEvent.body?.message);
@@ -812,7 +823,7 @@ try {
     /* Back to the run — the session checks below need more than one day. */
     await staff.client.patch(`/events/${ownEventId}`, {
       date: today, endDate: nextMonth, startTime: '18:00', endTime: '20:00',
-      registrationClosesAt: new Date(`${nextMonth}T20:00`).toISOString(),
+      registrationClosesAt: istInstant(nextMonth, '20:00'),
     });
 
     const backwards = await staff.client.patch(`/events/${ownEventId}`, {

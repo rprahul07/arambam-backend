@@ -1,6 +1,7 @@
 import { query, queryAll, queryOne, withTransaction } from '../../database/index.js';
 import { EVENT_LIFECYCLE, OCCUPYING_STATUSES, ROLES } from '../../config/constants.js';
 import ApiError from '../../utils/ApiError.js';
+import { instantAt } from '../../utils/today.js';
 import { slugify } from '../../utils/codes.js';
 import { toEvent } from '../../serializers/index.js';
 import { pushMany } from '../../services/notification.service.js';
@@ -265,12 +266,12 @@ export async function update(id, patch, user) {
    * deadline alone — no dates, no times — skipped the rule entirely and could
    * leave registration open long after the event had finished. Only the merged
    * view knows, so it is checked here rather than there. */
-  const dayOf = (value) => String(value).slice(0, 10);
   const closesAt = patch.registrationClosesAt ?? event.registration_closes_at;
   if (closesAt) {
-    const lastDay = dayOf(patch.endDate ?? event.end_date ?? patch.date ?? event.date);
+    const lastDay = patch.endDate ?? event.end_date ?? patch.date ?? event.date;
     const endTime = patch.endTime ?? event.end_time;
-    if (Date.parse(closesAt) > Date.parse(`${lastDay}T${endTime}`)) {
+    /* Read in the organisation's zone, not the server's — the server is UTC. */
+    if (Date.parse(closesAt) > instantAt(lastDay, endTime)) {
       throw ApiError.unprocessable('Registration cannot stay open after the event has finished', {
         registrationClosesAt: 'After the event ends',
       });
