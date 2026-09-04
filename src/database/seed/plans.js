@@ -9,12 +9,19 @@
  * Premium 2,500 / Student 300), which were placeholders and were charging
  * figures nobody had agreed to.
  *
- * The benefit lines are kept deliberately short and literally true: member
- * pricing and the twelve-month term are things the software actually does, and
- * the patron line is the organisation's own wording. Nothing else is claimed
- * here, because a benefit printed on a paid plan is a promise, and the last set
- * promised things like "reserved seating at cultural evenings" that nobody had
- * undertaken to provide.
+ * The benefit lines are kept short and literally true. A benefit printed on a
+ * paid plan is a promise, and an earlier set promised things like "reserved
+ * seating at cultural evenings" that nobody had undertaken to provide.
+ *
+ * "Member pricing on every ticketed event" was removed for the same reason: the
+ * organisation confirmed there is no special ticket price for members, and
+ * there could not be — everybody who comes to the centre is a member, so there
+ * is one price and nothing to be preferential about. The software agrees; see
+ * `priceFor`, which reads `member_price` for everyone.
+ *
+ * The patron line is the organisation's own wording, replacing ours. They
+ * asked what "supports one student's membership for a year" meant, which is a
+ * fair question about a sentence we wrote and they had not.
  */
 export const MEMBERSHIP_PLANS = [
   {
@@ -24,7 +31,6 @@ export const MEMBERSHIP_PLANS = [
     price: 100,
     durationMonths: 12,
     benefits: [
-      'Member pricing on every ticketed event',
       'Twelve months from the day you join',
       'A guardian’s details are recorded with the membership',
     ],
@@ -38,7 +44,7 @@ export const MEMBERSHIP_PLANS = [
     description: 'For members aged eighteen and over.',
     price: 300,
     durationMonths: 12,
-    benefits: ['Member pricing on every ticketed event', 'Twelve months from the day you join'],
+    benefits: ['Twelve months from the day you join'],
     active: true,
     /* The one most people are expected to take. */
     recommended: true,
@@ -47,13 +53,12 @@ export const MEMBERSHIP_PLANS = [
   {
     id: 'plan-patron',
     name: 'Patron',
-    description: 'Membership for yourself, and a year of it for a student who could not otherwise join.',
+    description: 'Membership for yourself, and a year of workshops for a student who could not otherwise take part.',
     price: 3000,
     durationMonths: 12,
     benefits: [
-      'Member pricing on every ticketed event',
       'Twelve months from the day you join',
-      'Supports one student’s membership for a year',
+      'Supports one student to participate in workshops at Aarambam',
     ],
     active: true,
     recommended: false,
