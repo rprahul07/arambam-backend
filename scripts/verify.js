@@ -329,6 +329,41 @@ try {
     afterPromotion.status === 'active', afterPromotion.status);
   await roleDesk.client.patch(`/users/${liveUser.id}/role`, { role: 'member' });
 
+  /* No screen sends a non-member price any more. The column is NOT NULL and
+     holds real figures for events priced before the rule changed, so the
+     server has to keep it level with the member price on its own — otherwise
+     creating an event answers a constraint violation, and editing one leaves a
+     figure that contradicts what is actually charged. */
+  const priceDesk = await signIn('revathi@aarambam.org');
+  const priced = await priceDesk.client.post('/events', {
+    title: `One Price Evening ${Date.now()}`,
+    summary: 'Created without a non-member price, as every screen now does.',
+    description: 'Exists to prove the server fills in the column nothing sends any more.',
+    categoryId: (await priceDesk.client.get('/bootstrap')).body.data.categories[0].id,
+    venueName: 'Aarambam Learning Centre',
+    venueAddress: '48, Belmont 1st Floor',
+    city: 'Coonoor',
+    date: new Date(Date.now() + 20 * 864e5).toISOString().slice(0, 10),
+    startTime: '18:00',
+    endTime: '20:00',
+    registrationOpensAt: new Date().toISOString(),
+    registrationClosesAt: new Date(Date.now() + 19 * 864e5).toISOString(),
+    capacity: 30,
+    type: 'paid',
+    memberPrice: 250,
+    organizerId: (await priceDesk.client.get('/bootstrap')).body.data.users
+      .find((u) => u.role === 'organizer').id,
+    lifecycle: 'published',
+  });
+  check('an event saves with no non-member price supplied', priced.status === 201, priced.body);
+  check('and the unused column is kept level with the price',
+    priced.body.data?.nonMemberPrice === 250, priced.body.data?.nonMemberPrice);
+
+  const repriced = await priceDesk.client.patch(`/events/${priced.body.data.id}`, { memberPrice: 400 });
+  check('changing the price moves both figures together',
+    repriced.body.data?.memberPrice === 400 && repriced.body.data?.nonMemberPrice === 400,
+    { member: repriced.body.data?.memberPrice, other: repriced.body.data?.nonMemberPrice });
+
   const forgot = await client().post('/auth/forgot-password', { email: 'nobody@example.com' });
   check('password reset does not reveal whether an address exists', forgot.status === 200, forgot.body);
 

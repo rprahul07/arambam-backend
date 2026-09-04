@@ -50,7 +50,10 @@ const base = {
   capacity: z.coerce.number().int().min(0).max(1_000_000),
   type: z.enum(EVENT_TYPE_VALUES),
   memberPrice: money.default(0),
-  nonMemberPrice: money.default(0),
+  /* Optional, and no longer sent by any screen. Accepted so an older client
+     or an import can still supply it; when it is absent the service keeps it
+     level with the member price. */
+  nonMemberPrice: money.optional(),
   organizerId: z.string().uuid('Choose an organiser'),
   lifecycle: z.enum(EVENT_LIFECYCLE_VALUES).default('draft'),
   /* Whose QR collects this event's money. Defaults to the Trust's, so an

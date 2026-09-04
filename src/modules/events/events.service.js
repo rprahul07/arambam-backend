@@ -204,7 +204,12 @@ export async function create(input, user) {
       input.lifecycle,
       input.type,
       input.type === 'free' ? 0 : input.memberPrice,
-      input.type === 'free' ? 0 : input.nonMemberPrice,
+      /* There is one price. `non_member_price` is no longer asked for
+         anywhere and nothing reads it to charge, but the column is NOT NULL
+         and holds real figures for events priced before the rule changed — so
+         it is kept level with the member price rather than left to drift into
+         a number that contradicts what is actually taken at the door. */
+      input.type === 'free' ? 0 : (input.nonMemberPrice ?? input.memberPrice),
       input.organizerId,
       publishedAt,
       input.paymentQrMode ?? 'trust',
@@ -255,7 +260,14 @@ export async function update(id, patch, user) {
      Every edit to a free event failed with a 500, whatever was being changed —
      including simply giving it a last day. */
   const nextType = patch.type ?? event.type;
-  const effective = nextType === 'free' ? { ...patch, memberPrice: 0, nonMemberPrice: 0 } : patch;
+  const effective =
+    nextType === 'free'
+      ? { ...patch, memberPrice: 0, nonMemberPrice: 0 }
+      : /* A price change moves both, so the unused column cannot end up
+           claiming a figure nobody is charged. */
+        patch.memberPrice !== undefined
+        ? { ...patch, nonMemberPrice: patch.nonMemberPrice ?? patch.memberPrice }
+        : patch;
 
   const sets = [];
   const params = [];
