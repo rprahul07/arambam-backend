@@ -1,4 +1,5 @@
 import { queryAll, queryOne } from '../../database/index.js';
+import env from '../../config/env.js';
 import { ROLES, SETTINGS_KEYS } from '../../config/constants.js';
 import {
   toCategory,

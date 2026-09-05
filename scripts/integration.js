@@ -39,6 +39,11 @@ process.env.PORT = process.env.INTEGRATION_PORT || '5201';
 process.env.LOG_LEVEL = 'error';
 process.env.MAIL_PREVIEW_ONLY = 'true';
 process.env.PAYMENT_PROVIDER = 'simulated';
+/* Set here rather than inherited from `.env`: this suite exercises the
+   one-click role buttons, and a deployment that has switched them off — as
+   production rightly has — would otherwise fail the run for a reason that has
+   nothing to do with the code under test. */
+process.env.DEMO_LOGIN_ENABLED = 'true';
 /* The suite fires thousands of requests in a couple of minutes. The
    production ceilings would start answering 429 part way through and mask
    what the endpoints actually do, so all three are lifted here. The limiters

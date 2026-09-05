@@ -30,6 +30,11 @@ process.env.PORT = process.env.VERIFY_PORT || '5199';
 process.env.LOG_LEVEL = 'error';
 process.env.MAIL_PREVIEW_ONLY = 'true';
 process.env.PAYMENT_PROVIDER = 'simulated';
+/* Set here rather than inherited from `.env`: this suite exercises the
+   one-click role buttons, and a deployment that has switched them off — as
+   production rightly has — would otherwise fail the run for a reason that has
+   nothing to do with the code under test. */
+process.env.DEMO_LOGIN_ENABLED = 'true';
 
 const { default: app } = await import('../src/app.js');
 const { default: db } = await import('../src/database/index.js');
@@ -1063,7 +1068,10 @@ try {
     startTime: '18:30',
     endTime: '21:00',
     registrationOpensAt: tomorrow.toISOString(),
-    registrationClosesAt: inAMonth.toISOString(),
+    /* Pinned to the event's own end time rather than "now, a month hence",
+       whose time of day drifts with the clock the suite happens to run at —
+       and could land either side of the event's finish. */
+    registrationClosesAt: istInstant(inAMonth.toISOString().slice(0, 10), '21:00'),
     capacity: 40,
     type: 'paid',
     memberPrice: 200,
