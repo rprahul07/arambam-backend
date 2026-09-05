@@ -61,8 +61,25 @@ const registrationFormSettings = async () => {
   return toRegistrationForm(row?.value ?? {});
 };
 
-/** The accounts behind the three demonstration buttons on the sign-in screen. */
+/**
+ * The accounts behind the three demonstration buttons on the sign-in screen.
+ *
+ * Empty when demonstration sign-in is switched off, which is what a real
+ * deployment runs. Sending them anyway published the internal user ids of the
+ * administrator and both facilitators to anonymous callers, and left the
+ * sign-in screen offering three buttons that could only fail.
+ */
 const demoAccounts = async () => {
+  if (!env.demoLoginEnabled) {
+    return {
+      adminUserId: '',
+      organizerUserId: '',
+      secondOrganizerUserId: '',
+      memberUserId: '',
+      memberId: '',
+    };
+  }
+
   const rows = await queryAll(
     `SELECT u.id, u.role, u.created_at, m.id AS member_id
      FROM users u
