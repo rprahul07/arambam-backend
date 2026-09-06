@@ -754,11 +754,28 @@ CREATE TRIGGER email_templates_touch BEFORE UPDATE ON email_templates
 --
 -- Databases created before this need the constraint widened and the row
 -- added; `CREATE TABLE IF NOT EXISTS` above does neither.
-ALTER TABLE email_templates DROP CONSTRAINT IF EXISTS email_templates_key_check;
-ALTER TABLE email_templates ADD CONSTRAINT email_templates_key_check CHECK (key IN (
-  'account_registration','password_reset','payment_confirmation',
-  'event_confirmation','event_reminder','renewal_reminder','event_cancellation'
-));
+-- Any existing check on `key`, whatever it was named. Postgres names an
+-- inline column constraint `email_templates_key_check`, but a database
+-- restored from a dump can carry a different one, and leaving that one in
+-- place would keep refusing the new template however many constraints were
+-- added beside it.
+DO $$
+DECLARE existing text;
+BEGIN
+  FOR existing IN
+    SELECT conname FROM pg_constraint
+     WHERE conrelid = 'email_templates'::regclass
+       AND contype = 'c'
+       AND pg_get_constraintdef(oid) LIKE '%account_registration%'
+  LOOP
+    EXECUTE format('ALTER TABLE email_templates DROP CONSTRAINT %I', existing);
+  END LOOP;
+
+  ALTER TABLE email_templates ADD CONSTRAINT email_templates_key_check CHECK (key IN (
+    'account_registration','password_reset','payment_confirmation',
+    'event_confirmation','event_reminder','renewal_reminder','event_cancellation'
+  ));
+END $$;
 
 INSERT INTO email_templates (key, name, description, subject, body, enabled, variables, sort_order)
 VALUES (
