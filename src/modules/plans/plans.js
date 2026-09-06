@@ -25,9 +25,28 @@ const planSchema = z.object({
   active: z.boolean().default(true),
   recommended: z.boolean().default(false),
   sortOrder: z.coerce.number().int().min(0).max(9999).default(0),
+  /**
+   * Who the plan is for, inclusive at both ends and optional at both.
+   *
+   * `null` clears a bound; leaving the field out leaves it as it was. That
+   * distinction matters on a PATCH — without it there would be no way to take
+   * the limit off a plan again.
+   */
+  minAge: z.coerce.number().int().min(0).max(120).nullable().optional(),
+  maxAge: z.coerce.number().int().min(0).max(120).nullable().optional(),
 });
 
 const updateSchema = planSchema.partial();
+
+/** An upper bound below the lower one would admit nobody at all. */
+const orderedAges = (plan) => {
+  if (plan.minAge != null && plan.maxAge != null && plan.minAge > plan.maxAge) {
+    throw ApiError.badRequest('The youngest age cannot be above the oldest', {
+      minAge: 'Must not be greater than the oldest age',
+    });
+  }
+};
+
 const idParam = z.object({ id: z.string().uuid('Unknown plan') });
 
 /** Only one tier may carry the "recommended" flag on the pricing page. */
@@ -55,9 +74,10 @@ router.post(
   validateBody(planSchema),
   asyncHandler(async (req, res) => {
     const p = req.body;
+    orderedAges(p);
     const row = await queryOne(
-      `INSERT INTO membership_plans (id, name, description, price, duration_months, benefits, active, recommended, sort_order)
-       VALUES (COALESCE($9::uuid, gen_random_uuid()),$1,$2,$3,$4,$5::jsonb,$6,$7,$8) RETURNING *`,
+      `INSERT INTO membership_plans (id, name, description, price, duration_months, benefits, active, recommended, sort_order, min_age, max_age)
+       VALUES (COALESCE($9::uuid, gen_random_uuid()),$1,$2,$3,$4,$5::jsonb,$6,$7,$8,$10,$11) RETURNING *`,
       [
         p.name,
         p.description,
@@ -68,6 +88,8 @@ router.post(
         p.recommended,
         p.sortOrder,
         p.id ?? null,
+        p.minAge ?? null,
+        p.maxAge ?? null,
       ],
     );
     if (p.recommended) await clearOtherRecommendations(row.id);
@@ -101,7 +123,21 @@ router.patch(
       active: 'active',
       recommended: 'recommended',
       sortOrder: 'sort_order',
+      minAge: 'min_age',
+      maxAge: 'max_age',
     };
+
+    /* Checked against the merged row, not the patch: sending only `maxAge`
+       has to be judged against the `minAge` already stored, or a two-field
+       rule is skipped by changing one field at a time. */
+    const stored = await queryOne(`SELECT min_age, max_age FROM membership_plans WHERE id = $1`, [
+      req.params.id,
+    ]);
+    if (!stored) throw ApiError.notFound('That plan no longer exists');
+    orderedAges({
+      minAge: req.body.minAge === undefined ? stored.min_age : req.body.minAge,
+      maxAge: req.body.maxAge === undefined ? stored.max_age : req.body.maxAge,
+    });
 
     const sets = [];
     const params = [];

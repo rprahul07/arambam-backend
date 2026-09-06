@@ -128,6 +128,8 @@ try {
         active: p.active,
         recommended: p.recommended,
         sort_order: p.sortOrder,
+        min_age: p.minAge ?? null,
+        max_age: p.maxAge ?? null,
       };
       const match = existing.find((e) => String(e.name).toLowerCase() === p.name.toLowerCase());
 
@@ -144,18 +146,19 @@ try {
       } else if (match) {
         await db.query(
           `UPDATE membership_plans SET name=$1, description=$2, price=$3, duration_months=$4,
-             benefits=$5::jsonb, active=$6, recommended=$7, sort_order=$8, updated_at=now()
+             benefits=$5::jsonb, active=$6, recommended=$7, sort_order=$8,
+             min_age=$10, max_age=$11, updated_at=now()
            WHERE id=$9`,
           [p.name, p.description, p.price, p.durationMonths, JSON.stringify(p.benefits),
-           p.active, p.recommended, p.sortOrder, match.id],
+           p.active, p.recommended, p.sortOrder, match.id, p.minAge ?? null, p.maxAge ?? null],
         );
       } else {
         await db.query(
           `INSERT INTO membership_plans
-             (name, description, price, duration_months, benefits, active, recommended, sort_order)
-           VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8)`,
+             (name, description, price, duration_months, benefits, active, recommended, sort_order, min_age, max_age)
+           VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9,$10)`,
           [p.name, p.description, p.price, p.durationMonths, JSON.stringify(p.benefits),
-           p.active, p.recommended, p.sortOrder],
+           p.active, p.recommended, p.sortOrder, p.minAge ?? null, p.maxAge ?? null],
         );
       }
       line(`  ${match ? 'updated' : 'added  '} ${p.name}`);

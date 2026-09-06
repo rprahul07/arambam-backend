@@ -22,7 +22,7 @@ import { buildDatabase } from './generate.js';
  */
 
 /** Multi-row INSERT in chunks — one round trip per chunk rather than per row. */
-async function insertMany(table, columns, rows, { chunk = 250, casts = {} } = {}) {
+async function insertMany(table, columns, rows, { chunk = 250, casts = {}, onConflict = '' } = {}) {
   if (!rows.length) return 0;
   let written = 0;
 
@@ -38,7 +38,7 @@ async function insertMany(table, columns, rows, { chunk = 250, casts = {} } = {}
     });
 
     await db.query(
-      `INSERT INTO ${table} (${columns.join(',')}) VALUES ${tuples.join(',')}`,
+      `INSERT INTO ${table} (${columns.join(',')}) VALUES ${tuples.join(',')} ${onConflict}`,
       params,
     );
     written += slice.length;
@@ -98,7 +98,7 @@ export async function seed({ fresh = true, minimal = false } = {}) {
   const planIds = new Map();
   await insertMany(
     'membership_plans',
-    ['id', 'name', 'description', 'price', 'duration_months', 'benefits', 'active', 'recommended', 'sort_order'],
+    ['id', 'name', 'description', 'price', 'duration_months', 'benefits', 'active', 'recommended', 'sort_order', 'min_age', 'max_age'],
     MEMBERSHIP_PLANS.map((plan) => {
       const uuid = crypto.randomUUID();
       planIds.set(plan.id, uuid);
@@ -112,6 +112,8 @@ export async function seed({ fresh = true, minimal = false } = {}) {
         active: plan.active,
         recommended: Boolean(plan.recommended),
         sort_order: plan.sortOrder,
+        min_age: plan.minAge ?? null,
+        max_age: plan.maxAge ?? null,
       };
     }),
     { casts: { benefits: '::jsonb' } },
@@ -421,7 +423,10 @@ export async function seed({ fresh = true, minimal = false } = {}) {
       variables: JSON.stringify(template.variables),
       sort_order: index,
     })),
-    { casts: { variables: '::jsonb' } },
+    /* The schema seeds `password_reset` itself, because databases created
+       before that template existed need it added — so the row may already be
+       here by the time the seed runs. */
+    { casts: { variables: '::jsonb' }, onConflict: 'ON CONFLICT (key) DO NOTHING' },
   );
 
   /* ------------------------------------------------- sequence alignment */

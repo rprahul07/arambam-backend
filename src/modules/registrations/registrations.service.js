@@ -1,6 +1,8 @@
 import { query, queryAll, queryOne, withTransaction } from '../../database/index.js';
 import env from '../../config/env.js';
 import {
+  DOOR_CLOSES_MINUTES_AFTER,
+  DOOR_OPENS_MINUTES_BEFORE,
   ATTENDANCE,
   EVENT_LIFECYCLE,
   MEMBERSHIP_STATUS,
@@ -13,7 +15,7 @@ import {
   ROLES,
 } from '../../config/constants.js';
 import ApiError from '../../utils/ApiError.js';
-import { today as localToday, dateOnly } from '../../utils/today.js';
+import { today as localToday, dateOnly, instantAt } from '../../utils/today.js';
 import { registrationReference, ticketCode } from '../../utils/codes.js';
 import { toEvent, toPayment, toRegistration } from '../../serializers/index.js';
 import { createOrder } from '../../services/gateway.service.js';
@@ -445,11 +447,51 @@ export async function checkInByCode({ eventId, code }, actor) {
     return { kind: 'not_today', ...eventPayload, today, startsOn, endsOn };
   }
 
+  /* The right day is not the same as the right time.
+   *
+   * Today's session runs between the event's start and end times, and the door
+   * admits from an hour before until an hour after. Without this a ticket for
+   * a 14:30 class was accepted at 20:09, and at 00:34 for a session still
+   * fourteen hours away — both written into the register as if somebody had
+   * walked in. */
+  const opensAt = instantAt(today, event.start_time) - DOOR_OPENS_MINUTES_BEFORE * 60_000;
+  const closesAt = instantAt(today, event.end_time) + DOOR_CLOSES_MINUTES_AFTER * 60_000;
+  const now = Date.now();
+
+  if (now < opensAt || now > closesAt) {
+    return {
+      kind: 'outside_hours',
+      ...eventPayload,
+      sessionDate: today,
+      startTime: event.start_time,
+      endTime: event.end_time,
+      opensAt: new Date(opensAt).toISOString(),
+      closesAt: new Date(closesAt).toISOString(),
+    };
+  }
+
   const already = await queryOne(
-    `SELECT 1 FROM registration_attendance WHERE registration_id = $1 AND session_date = $2`,
+    `SELECT marked_at FROM registration_attendance WHERE registration_id = $1 AND session_date = $2`,
     [registration.id, today],
   );
-  if (already) return { kind: 'already_checked_in', ...eventPayload, sessionDate: today };
+  if (already) {
+    /**
+     * The time they arrived *today*.
+     *
+     * `registrations.checked_in_at` is written once with COALESCE and never
+     * moves, so on a multi-day course it holds the first day they ever came.
+     * The desk was being told somebody had checked in at eight the previous
+     * evening when they had walked up thirty seconds ago, which reads as the
+     * clock being wrong. Each day has its own `marked_at`; that is the one to
+     * show.
+     */
+    return {
+      kind: 'already_checked_in',
+      ...eventPayload,
+      sessionDate: today,
+      checkedInAt: already.marked_at ? new Date(already.marked_at).toISOString() : undefined,
+    };
+  }
 
   return { kind: 'valid', ...eventPayload, sessionDate: today };
 }

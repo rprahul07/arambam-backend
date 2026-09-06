@@ -15,6 +15,7 @@ import notificationsRoutes from './notifications/notifications.js';
 import settingsRoutes from './settings/settings.js';
 import uploadsRoutes from './uploads/uploads.js';
 import mediaRoutes from './media/media.js';
+import calendarRoutes from './calendar/calendar.js';
 
 const router = Router();
 
@@ -39,6 +40,7 @@ router.get('/', (req, res) =>
       settings: `${env.apiPrefix}/settings`,
       uploads: `${env.apiPrefix}/uploads`,
       media: `${env.apiPrefix}/media`,
+      calendar: `${env.apiPrefix}/calendar`,
     },
   }),
 );
@@ -57,5 +59,6 @@ router.use('/notifications', notificationsRoutes);
 router.use('/settings', settingsRoutes);
 router.use('/uploads', uploadsRoutes);
 router.use('/media', mediaRoutes);
+router.use('/calendar', calendarRoutes);
 
 export default router;

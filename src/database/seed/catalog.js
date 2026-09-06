@@ -171,6 +171,20 @@ export const EMAIL_TEMPLATES = [
     variables: ['member_name', 'verification_link'],
   },
   {
+    key: 'password_reset',
+    name: 'Password reset',
+    description: 'Sent when somebody asks to reset their password. Carries the reset link.',
+    subject: 'Reset your Aarambam password',
+    body:
+      'Hello {{member_name}},\n\n' +
+      'Somebody asked to reset the password for this Aarambam account. Use the link below to choose a new one:\n\n' +
+      '{{reset_link}}\n\n' +
+      'The link can be used once and expires in an hour. If this was not you, ignore this message — nothing has changed.\n\n' +
+      '— Aarambam',
+    enabled: true,
+    variables: ['member_name', 'reset_link'],
+  },
+  {
     key: 'payment_confirmation',
     name: 'Payment confirmation',
     description: 'Sent on every successful payment, with the PDF receipt attached.',

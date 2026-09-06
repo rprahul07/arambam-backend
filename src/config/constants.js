@@ -174,6 +174,11 @@ export const NOTIFICATION_TYPE_VALUES = [
 
 export const EMAIL_TEMPLATE_KEYS = [
   'account_registration',
+  /* Its own template. A password reset used to borrow the registration one,
+     so somebody who had forgotten their password was sent "Confirm your email
+     to finish joining Aarambam" — and an administrator switching that
+     template off in the settings screen silently turned resets off with it. */
+  'password_reset',
   'payment_confirmation',
   'event_confirmation',
   'event_reminder',
@@ -188,6 +193,39 @@ export const SETTINGS_KEYS = {
 };
 
 /* ---------------------------------------------------------- miscellaneous */
+
+/**
+ * How long either side of a session the door will admit somebody.
+ *
+ * A scan used to be checked against the *date* only, so a ticket for a
+ * 14:30–15:30 class was accepted at 20:09 that evening, and at 00:34 — fourteen
+ * hours before the session it was marking. Both were recorded as attendance at
+ * a class nobody was in.
+ *
+ * An hour before covers people who arrive early and a desk that opens ahead of
+ * time; an hour after covers a queue still being cleared and a volunteer
+ * catching up. Anything further out is not somebody arriving, and an organiser
+ * correcting the register afterwards has the register itself for that.
+ */
+export const DOOR_OPENS_MINUTES_BEFORE = 60;
+export const DOOR_CLOSES_MINUTES_AFTER = 60;
+
+/**
+ * How long a just-rotated refresh token is still tolerated.
+ *
+ * Rotation is strict: presenting a spent token revokes every session for the
+ * account, on the assumption it was stolen. That is right for a token turning
+ * up a week later and wrong for the ordinary case it was also catching — the
+ * SPA refreshes on every cold start, so two tabs reloading together, a double
+ * reload, or a reload racing a request in flight all present the same token
+ * twice within a second or two. Members were signed out mid-payment and told
+ * their session was invalid.
+ *
+ * Inside this window a repeat is treated as the duplicate it almost certainly
+ * is: a fresh pair is issued and nothing is revoked. Outside it, the original
+ * reasoning stands.
+ */
+export const REFRESH_REUSE_GRACE_SECONDS = 60;
 
 /** Renewal nudges begin this many days before a membership lapses. */
 export const RENEWAL_WINDOW_DAYS = 30;

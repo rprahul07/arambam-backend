@@ -224,6 +224,10 @@ export const toPlan = (row) =>
     active: Boolean(row.active),
     recommended: row.recommended ? true : undefined,
     sortOrder: num(row.sort_order),
+    /* Both inclusive, both optional. Null means no bound at that end, and
+       `compact` drops them, so an unrestricted plan carries neither. */
+    minAge: row.min_age === null || row.min_age === undefined ? undefined : num(row.min_age),
+    maxAge: row.max_age === null || row.max_age === undefined ? undefined : num(row.max_age),
   });
 
 /* ------------------------------------------------------------ subscription */
@@ -324,6 +328,16 @@ export const toRegistration = (row) =>
        asked for" stay distinguishable. */
     attendedDates: Array.isArray(row.attended_dates)
       ? row.attended_dates.filter(Boolean).map((d) => day(d))
+      : undefined,
+    /* When each day was marked, keyed by the day. A map rather than a second
+       array so a screen showing one session cannot pair it with the wrong
+       time. */
+    attendedAt: Array.isArray(row.attended_dates) && Array.isArray(row.attended_times)
+      ? Object.fromEntries(
+          row.attended_dates
+            .map((d, index) => [day(d), iso(row.attended_times[index])])
+            .filter(([key, value]) => key && value),
+        )
       : undefined,
   });
 

@@ -1,6 +1,6 @@
 import { query, queryOne, withTransaction } from '../../database/index.js';
 import env from '../../config/env.js';
-import { MINOR_AGE, ROLES } from '../../config/constants.js';
+import { MINOR_AGE, REFRESH_REUSE_GRACE_SECONDS, ROLES } from '../../config/constants.js';
 import ApiError from '../../utils/ApiError.js';
 import { hashPassword, verifyPassword, burnPasswordTime } from '../../utils/password.js';
 import {
@@ -97,6 +97,39 @@ export async function rotateSession(refreshToken, context = {}) {
   const digest = hashToken(refreshToken);
 
   const stored = await queryOne(`SELECT * FROM refresh_tokens WHERE id = $1`, [payload.jti]);
+
+  /**
+   * The same token, twice, seconds apart.
+   *
+   * The front end refreshes on every cold start, so this is what two tabs
+   * reloading together looks like — or one tab reloaded twice, or a reload
+   * racing a request already in flight. Calling that theft and revoking the
+   * account's sessions is why people were being signed out when they reloaded
+   * the page, and why a payment only appeared after signing in again.
+   *
+   * Within the grace window a repeat is treated as a duplicate: a fresh pair
+   * is issued, the successor already handed to the other tab is left alone,
+   * and nothing is revoked. Outside it, a spent token is still theft.
+   */
+  const rotatedAgo = stored?.rotated_at
+    ? (Date.now() - new Date(stored.rotated_at).getTime()) / 1000
+    : Number.POSITIVE_INFINITY;
+  const duplicate =
+    stored &&
+    stored.token_hash === digest &&
+    stored.revoked_at &&
+    rotatedAgo <= REFRESH_REUSE_GRACE_SECONDS;
+
+  if (duplicate) {
+    const owner = await findUserById(stored.user_id);
+    if (!owner || owner.status !== 'active') {
+      throw ApiError.unauthorized('That account is not available', undefined, 'ACCOUNT_INACTIVE');
+    }
+    if (new Date(stored.expires_at) <= new Date()) {
+      throw ApiError.unauthorized('Your session has expired', undefined, 'SESSION_EXPIRED');
+    }
+    return { user: owner, ...(await issueSession(owner, context)) };
+  }
   if (!stored || stored.token_hash !== digest) {
     if (stored) {
       await query(`UPDATE refresh_tokens SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL`, [
@@ -121,7 +154,12 @@ export async function rotateSession(refreshToken, context = {}) {
     throw ApiError.unauthorized('That account is not available', undefined, 'ACCOUNT_INACTIVE');
   }
 
-  await query(`UPDATE refresh_tokens SET revoked_at = now() WHERE id = $1`, [stored.id]);
+  /* `rotated_at` alongside `revoked_at`: only a token retired by rotation is
+     eligible for the grace window above. One revoked by signing out, or by an
+     administrator, must stay dead. */
+  await query(`UPDATE refresh_tokens SET revoked_at = now(), rotated_at = now() WHERE id = $1`, [
+    stored.id,
+  ]);
   const tokens = await issueSession(user, context);
   return { user, ...tokens };
 }
@@ -390,9 +428,13 @@ export async function requestPasswordReset(email) {
   );
 
   const link = `${env.clientUrl}/reset-password?token=${token}&email=${encodeURIComponent(user.email)}`;
-  await sendTemplate('account_registration', user.email, {
+  /* Its own template. This used to send `account_registration`, so the answer
+     to "I've forgotten my password" was an email headed "Confirm your email to
+     finish joining Aarambam" — and turning that template off in the settings
+     screen turned password resets off without saying so. */
+  await sendTemplate('password_reset', user.email, {
     member_name: user.name,
-    verification_link: link,
+    reset_link: link,
   });
 
   recordQuietly({

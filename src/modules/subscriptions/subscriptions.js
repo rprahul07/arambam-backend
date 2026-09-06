@@ -18,6 +18,7 @@ import { validateBody, validateParams, validateQuery } from '../../middleware/va
 import { authenticate, adminOnly } from '../../middleware/auth.js';
 import { writeLimiter } from '../../middleware/rateLimit.js';
 import { createOrder } from '../../services/gateway.service.js';
+import { currentAge, planAgeProblem } from '../../utils/age.js';
 import { recordQuietly } from '../../services/activity.service.js';
 
 /**
@@ -225,6 +226,25 @@ router.post(
     if (!plan) throw ApiError.notFound('That plan no longer exists');
     if (!plan.active && !isAdmin) {
       throw ApiError.badRequest('That plan is no longer on sale', { planId: 'Not available' });
+    }
+
+    /**
+     * Old enough, or young enough.
+     *
+     * The "Under 18" plan enforced nothing: a nineteen year old could choose
+     * it and pay a hundred rupees instead of three hundred. The bound is the
+     * plan's own (`min_age` / `max_age`), so the organisation can move it
+     * without a deploy, and it is checked here because this is the only place
+     * a membership is actually sold — the pricing page greys the wrong plans
+     * out, but a greyed-out button is a courtesy, not a control.
+     *
+     * Administrators are not exempt. Selling somebody the wrong plan at the
+     * counter is the same mistake as buying it yourself, and if a genuine
+     * exception is ever needed the bound can be lifted on the plan.
+     */
+    const ageProblem = planAgeProblem(plan, currentAge(member));
+    if (ageProblem) {
+      throw ApiError.badRequest(ageProblem, { planId: 'Not available at your age' }, 'PLAN_AGE_MISMATCH');
     }
 
     /**

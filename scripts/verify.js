@@ -15,6 +15,7 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { EMAIL_TEMPLATE_KEYS } from '../src/config/constants.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
@@ -78,6 +79,64 @@ const BASE = `http://127.0.0.1:${env.port}${env.apiPrefix}`;
  */
 const istInstant = (day, time) => new Date(`${day}T${time}:00+05:30`).toISOString();
 
+/**
+ * A HH:MM reading, `minutes` from now, in the organisation's zone.
+ *
+ * The door only admits around a session, so a check-in test has to put the
+ * session around the moment the suite runs. Hard-coding 18:00 meant the scans
+ * passed or failed depending on the hour the suite happened to be run at.
+ */
+const clockFromNow = (minutes) =>
+  new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false,
+  }).format(new Date(Date.now() + minutes * 60_000));
+
+/**
+ * Today, as the organisation reckons it.
+ *
+ * Not `new Date().toLocaleDateString()`, which is the date in whatever zone
+ * the *suite* happens to run in. Between 18:30 and midnight UTC it is already
+ * tomorrow in Coonoor, so a run with TZ=UTC in that window built its events
+ * for yesterday and then wondered why the door would not admit anyone. The
+ * server answers in the organisation's zone; the tests have to ask in it.
+ */
+const istToday = () =>
+  new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
+
+/** Minutes since midnight, in the organisation's zone. */
+const istMinutesNow = () => {
+  const [h, m] = clockFromNow(0).split(':').map(Number);
+  return h * 60 + m;
+};
+
+const hhmm = (minutes) =>
+  `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+
+/**
+ * A session window `offset` minutes from now, of `length` minutes.
+ *
+ * Returns `null` when the window would fall outside today — an event's start
+ * and end are times on a date, so a window running past midnight is not a
+ * shorter event, it is a different day. Near midnight there is genuinely no
+ * room for "five hours ago", and a check that cannot be set up is skipped
+ * rather than reported as a failure of the thing it was meant to test.
+ */
+const windowFromNow = (offset, length) => {
+  const start = istMinutesNow() + offset;
+  const end = start + length;
+  if (start < 0 || end > 24 * 60 - 1) return null;
+  return { startTime: hhmm(start), endTime: hhmm(end) };
+};
+
+/** A window that contains this moment, clamped so it never crosses midnight. */
+const windowAroundNow = (before, after) => {
+  const now = istMinutesNow();
+  return {
+    startTime: hhmm(Math.max(0, now - before)),
+    endTime: hhmm(Math.min(24 * 60 - 1, now + after)),
+  };
+};
+
 /** A browser-like client: keeps the refresh cookie and the access token. */
 function client() {
   const jar = new Map();
@@ -120,6 +179,10 @@ function client() {
       accessToken = token;
     },
     token: () => accessToken,
+    /* Reading and seeding the jar, so one client can be handed the cookie
+       another was holding — which is what a second browser tab is. */
+    cookie: (name) => jar.get(name),
+    setCookie: (name, value) => jar.set(name, value),
   };
 }
 
@@ -183,7 +246,12 @@ try {
     publicData.categories.every((c) => typeof c.color === 'string' && !('colour' in c)),
     publicData.categories[0]);
   check('organisation profile is populated', publicData.organisation.name === 'Aarambam');
-  check('six email templates are configured', publicData.emailTemplates.length === 6);
+  check('every email template is configured',
+    publicData.emailTemplates.length === EMAIL_TEMPLATE_KEYS.length,
+    { got: publicData.emailTemplates.map((t) => t.key), want: EMAIL_TEMPLATE_KEYS });
+  check('a password reset has a template of its own',
+    publicData.emailTemplates.some((t) => t.key === 'password_reset'),
+    publicData.emailTemplates.map((t) => t.key));
 
   const eventsList = await anon.get('/events?page=1&pageSize=5');
   check('GET /events is paged', eventsList.status === 200 && eventsList.body.meta.pageSize === 5,
@@ -229,6 +297,55 @@ try {
   const refreshed = await member.client.post('/auth/refresh');
   check('the session refreshes from the httpOnly cookie',
     refreshed.status === 200 && typeof refreshed.body.data.accessToken === 'string', refreshed.body);
+
+  /* Two tabs, reloading together.
+
+     The front end refreshes on every cold start, so the same refresh token
+     really does get presented twice within a second or two — two tabs open,
+     a double reload, a reload racing a request in flight. Rotation used to
+     call that theft and revoke every session the account had, so people were
+     signed out by reloading the page, and a payment the office had just
+     verified only showed up after signing in again. */
+  {
+    const tabA = client();
+    const signedIn = await tabA.post('/auth/demo-login', { role: 'member' });
+    tabA.setToken(signedIn.body.data.accessToken);
+
+    /* Exactly what the second tab holds: the cookie as it was before the
+       first tab rotated it. */
+    const shared = tabA.cookie('refreshToken');
+    const tabB = client();
+    tabB.setCookie('refreshToken', shared);
+
+    const first = await tabA.post('/auth/refresh');
+    check('the first tab refreshes normally', first.status === 200, first.body);
+    check('and is issued a different token than it presented',
+      tabA.cookie('refreshToken') !== shared, 'cookie unchanged');
+
+    const second = await tabB.post('/auth/refresh');
+    check('the other tab, holding the token just rotated, is not treated as theft',
+      second.status === 200 && typeof second.body?.data?.accessToken === 'string', second.body);
+
+    const stillA = await tabA.post('/auth/refresh');
+    const stillB = await tabB.post('/auth/refresh');
+    check('and neither tab has been signed out by the other',
+      stillA.status === 200 && stillB.status === 200,
+      { a: stillA.status, b: stillB.status });
+
+    /* The window is a tolerance, not an amnesty: a token from a session that
+       was deliberately ended stays dead however recently it was used. */
+    const endMe = client();
+    const ended = await endMe.post('/auth/demo-login', { role: 'member' });
+    endMe.setToken(ended.body.data.accessToken);
+    const spent = endMe.cookie('refreshToken');
+    await endMe.post('/auth/logout');
+
+    const afterLogout = client();
+    afterLogout.setCookie('refreshToken', spent);
+    const revived = await afterLogout.post('/auth/refresh');
+    check('a token from a session that was signed out cannot be revived',
+      revived.status === 401, revived.body);
+  }
 
   for (const role of ['administrator', 'organizer', 'member']) {
     const demo = await client().post('/auth/demo-login', { role });
@@ -520,9 +637,64 @@ try {
       byOffice.status === 200 && byOffice.body.data.status === 'cancelled', byOffice.body);
   }
 
+  /* ================================================== calendar feeds */
+
+  section('Calendar subscription');
+  {
+    /* A calendar client cannot sign in, so the URL is the authorisation.
+       These check that it is unguessable, that it shows the right person the
+       right events, and that rotating it kills the old one. */
+    const issued = await member.client.post('/calendar/token');
+    check('a member can be issued a calendar link',
+      issued.status === 200 && typeof issued.body.data.url === 'string', issued.body);
+    check('the token is long enough not to be guessed',
+      (issued.body.data?.token ?? '').length === 64, issued.body.data?.token?.length);
+
+    const again = await member.client.post('/calendar/token');
+    check('asking twice returns the same link rather than a new one',
+      again.body.data.token === issued.body.data.token);
+
+    /* Fetched the way a calendar client would: no cookie, no bearer token. */
+    const feedUrl = `/calendar/${issued.body.data.token}.ics`;
+    const feed = await client().get(feedUrl, { anonymous: true });
+    const ics = typeof feed.body?.raw === 'string' ? feed.body.raw : JSON.stringify(feed.body);
+    check('the feed is served to a client that cannot sign in',
+      feed.status === 200 && ics.includes('BEGIN:VCALENDAR'), ics.slice(0, 120));
+    check('and it carries the events this member holds a ticket for',
+      ics.includes('BEGIN:VEVENT'), ics.slice(0, 200));
+    check('but never anything about money',
+      !/amount|payment|receipt/i.test(ics));
+
+    const madeUp = await client().get(`/calendar/${'a'.repeat(64)}.ics`, { anonymous: true });
+    check('a made-up token gets nothing', madeUp.status === 404, madeUp.status);
+
+    const tooShort = await client().get('/calendar/abc.ics', { anonymous: true });
+    check('and so does a short one', tooShort.status === 404, tooShort.status);
+
+    const rotated = await member.client.post('/calendar/token', { rotate: true });
+    check('rotating issues a different link',
+      rotated.body.data.token !== issued.body.data.token, rotated.body);
+    const dead = await client().get(feedUrl, { anonymous: true });
+    check('and the old link stops working', dead.status === 404, dead.status);
+  }
+
   /* ================================================ membership purchase */
 
   section('Membership purchase');
+
+  /* The member's age as the server reckons it: date of birth wins, the stored
+     number is the fallback. Plans carry age bounds now, so several checks
+     below have to know which plans this member is actually allowed. */
+  const myAge = (() => {
+    const me = md.members.find((m) => m.id === memberId);
+    if (me?.dateOfBirth) {
+      const [by, bm, bd] = me.dateOfBirth.slice(0, 10).split('-').map(Number);
+      const now = new Date();
+      return now.getFullYear() - by -
+        (now.getMonth() + 1 < bm || (now.getMonth() + 1 === bm && now.getDate() < bd) ? 1 : 0);
+    }
+    return me?.age ?? 30;
+  })();
 
   /* The dearest active plan, found by price rather than by name. Naming one
      ("Premium") is what broke this check when the organisation replaced the
@@ -532,6 +704,8 @@ try {
      with upgrades. */
   const plan = [...md.plans]
     .filter((p) => p.active)
+    .filter((p) => (p.minAge === undefined || myAge >= p.minAge) &&
+                   (p.maxAge === undefined || myAge <= p.maxAge))
     .sort((a, b) => Number(b.price) - Number(a.price))[0];
   const heldBefore = md.subscriptions.find(
     (s) => s.memberId === memberId && s.status === 'active',
@@ -664,8 +838,16 @@ try {
     meAfterDrop.status === 'active' && meAfterDrop.currentSubscriptionId === inForce.id,
     { status: meAfterDrop.status, current: meAfterDrop.currentSubscriptionId });
 
+  /* Cheaper *and* one this member may hold. The cheapest plan the
+     organisation sells is "Under 18", so picking on price alone chose a plan
+     the member is too old for and the downgrade was correctly refused — a
+     failure about age dressed up as a failure about downgrades. */
+  const eligible = (p) =>
+    (p.minAge === undefined || myAge >= p.minAge) &&
+    (p.maxAge === undefined || myAge <= p.maxAge);
+
   const cheaper = afterDrop.body.data.plans
-    .filter((p) => p.active && p.price < inForcePlan.price)
+    .filter((p) => p.active && p.price < inForcePlan.price && eligible(p))
     .sort((a, b) => a.price - b.price)[0];
 
   if (cheaper) {
@@ -735,15 +917,18 @@ try {
        UTC date here encoded the very bug this checks for: between midnight and
        05:30 IST the two disagree, and the test would demand the server mark
        yesterday's session. */
-    const today = new Date().toLocaleDateString('en-CA');
+    const today = istToday();
     const nextMonth = new Date(Date.now() + 30 * 864e5).toLocaleDateString('en-CA');
     const staff = await signIn('revathi@aarambam.org');
+    /* The session brackets right now, so the door is open for the scans below. */
+    /* Around now, but never spilling over midnight. */
+    const { startTime: sessionStart, endTime: sessionEnd } = windowAroundNow(30, 30);
     const widened = await staff.client.patch(`/events/${ownEventId}`, {
       date: today,
       endDate: nextMonth,
-      startTime: '18:00',
-      endTime: '20:00',
-      registrationClosesAt: istInstant(nextMonth, '20:00'),
+      startTime: sessionStart,
+      endTime: sessionEnd,
+      registrationClosesAt: istInstant(nextMonth, sessionEnd),
     });
     check('an event can run across a range of days',
       widened.status === 200 && widened.body.data.endDate === nextMonth,
@@ -825,10 +1010,11 @@ try {
     check('registration may close after the event has started',
       midEvent.status === 200, midEvent.body?.errors ?? midEvent.body?.message);
 
-    /* Back to the run — the session checks below need more than one day. */
+    /* Back to the run, with the session around now — the scans below need both
+       more than one day and an open door. */
     await staff.client.patch(`/events/${ownEventId}`, {
-      date: today, endDate: nextMonth, startTime: '18:00', endTime: '20:00',
-      registrationClosesAt: istInstant(nextMonth, '20:00'),
+      date: today, endDate: nextMonth, startTime: sessionStart, endTime: sessionEnd,
+      registrationClosesAt: istInstant(nextMonth, sessionEnd),
     });
 
     const backwards = await staff.client.patch(`/events/${ownEventId}`, {
@@ -914,6 +1100,57 @@ try {
     check('the register overview lists the run',
       overview.status === 200 && overview.body.data.some((e) => e.id === ownEventId),
       overview.body?.data?.length);
+
+    /* The right day is not the right time. A ticket for an afternoon class was
+       being accepted at twenty past eight that evening, and at half past
+       midnight for a session still fourteen hours off — each one written into
+       the register as though somebody had walked in. */
+    const laterToday = windowFromNow(240, 60);
+    if (laterToday) {
+      await staff.client.patch(`/events/${ownEventId}`, {
+        date: today, endDate: nextMonth, ...laterToday,
+        registrationClosesAt: istInstant(nextMonth, laterToday.endTime),
+      });
+      const tooEarly = await organizer.client.post('/registrations/check-in', {
+        eventId: ownEventId, code: doorList.ticketCode,
+      });
+      check('the door refuses a scan hours before the session',
+        tooEarly.body.data.kind === 'outside_hours', tooEarly.body?.data?.kind);
+    }
+
+    const earlierToday = windowFromNow(-300, 60);
+    if (earlierToday) {
+      await staff.client.patch(`/events/${ownEventId}`, {
+        date: today, endDate: nextMonth, ...earlierToday,
+        registrationClosesAt: istInstant(nextMonth, earlierToday.endTime),
+      });
+      const tooLateScan = await organizer.client.post('/registrations/check-in', {
+        eventId: ownEventId, code: doorList.ticketCode,
+      });
+      check('and a scan hours after it finished',
+        tooLateScan.body.data.kind === 'outside_hours', tooLateScan.body?.data?.kind);
+    }
+
+    /* An hour either side is still admitted — early arrivals, and a queue
+       still being cleared after the end. */
+    const soon = windowFromNow(30, 60);
+    if (soon) {
+      await staff.client.patch(`/events/${ownEventId}`, {
+        date: today, endDate: nextMonth, ...soon,
+        registrationClosesAt: istInstant(nextMonth, soon.endTime),
+      });
+      const early = await organizer.client.post('/registrations/check-in', {
+        eventId: ownEventId, code: doorList.ticketCode,
+      });
+      check('but half an hour early is fine',
+        ['valid', 'already_checked_in'].includes(early.body.data.kind), early.body?.data?.kind);
+    }
+
+    /* Put the session back around now for the register check below. */
+    await staff.client.patch(`/events/${ownEventId}`, {
+      date: today, endDate: nextMonth, startTime: sessionStart, endTime: sessionEnd,
+      registrationClosesAt: istInstant(nextMonth, sessionEnd),
+    });
 
     const register = await organizer.client.get(`/registrations/event/${ownEventId}/attendance`);
     const mine = (register.body.data ?? []).filter((a) => a.registrationId === doorList.id ||
@@ -1168,6 +1405,85 @@ try {
   check('only one plan is ever recommended', recommendedCount === 1, recommendedCount);
   const planInUse = await admin.client.del(`/plans/${plan.id}`);
   check('a plan with subscriptions cannot be deleted', planInUse.status === 409, planInUse.body);
+
+  /* — age-restricted plans —
+     The "Under 18" plan enforced nothing: a nineteen-year-old could pick it
+     and pay a hundred rupees rather than three hundred. The bound is a
+     property of the plan now, so these bracket the member's own age rather
+     than hard-coding eighteen. */
+  {
+    const age = myAge;
+
+    const stamp = Date.now();
+    const makePlan = (suffix, bounds) => admin.client.post('/plans', {
+      name: `Age Check ${suffix} ${stamp}`,
+      description: 'temp', price: 100, durationMonths: 12,
+      benefits: ['One'], active: true, recommended: false, sortOrder: 90,
+      ...bounds,
+    });
+
+    const tooOld = await makePlan('max', { maxAge: Math.max(age - 1, 0) });
+    const tooYoung = await makePlan('min', { minAge: age + 1 });
+    check('a plan can carry an age range',
+      tooOld.status === 201 && tooOld.body.data.maxAge === Math.max(age - 1, 0) &&
+      tooYoung.status === 201 && tooYoung.body.data.minAge === age + 1,
+      { tooOld: tooOld.body, tooYoung: tooYoung.body });
+
+    const inverted = await makePlan('inverted', { minAge: 40, maxAge: 20 });
+    check('a plan whose oldest age is below its youngest is refused',
+      inverted.status === 400, inverted.body);
+
+    const boughtTooYoung = await member.client.post('/subscriptions', {
+      planId: tooYoung.body.data.id, method: 'upi',
+    });
+    check('a member below a plan’s minimum age cannot buy it',
+      boughtTooYoung.status === 400 && /aged \d+ and over/.test(boughtTooYoung.body.message ?? ''),
+      boughtTooYoung.body);
+
+    const boughtTooOld = await member.client.post('/subscriptions', {
+      planId: tooOld.body.data.id, method: 'upi',
+    });
+    check('and a member above its maximum age cannot either',
+      boughtTooOld.status === 400 && /aged \d+ and under/.test(boughtTooOld.body.message ?? ''),
+      boughtTooOld.body);
+
+    /* Selling somebody the wrong plan at the counter is the same mistake as
+       buying it yourself, so the counter is not exempt. */
+    const soldByAdmin = await admin.client.post('/subscriptions', {
+      memberId, planId: tooYoung.body.data.id, method: 'upi',
+    });
+    check('an administrator cannot sell it to them either',
+      soldByAdmin.status === 400, soldByAdmin.body);
+
+    /* The bound can come back off — sending null clears it, which is why the
+       PATCH schema distinguishes null from an absent field. */
+    const lifted = await admin.client.patch(`/plans/${tooYoung.body.data.id}`, { minAge: null });
+    check('an age bound can be lifted again',
+      lifted.status === 200 && lifted.body.data.minAge === undefined, lifted.body.data);
+
+    /* By now this member has a term queued from the downgrade checks above,
+       so the purchase is stopped for that reason instead. What matters is
+       that age is no longer the objection. */
+    const nowAllowed = await member.client.post('/subscriptions', {
+      planId: tooYoung.body.data.id, method: 'upi',
+    });
+    check('and then their age is no longer what stands in the way',
+      nowAllowed.status === 201 || nowAllowed.body.code !== 'PLAN_AGE_MISMATCH',
+      nowAllowed.body);
+    if (nowAllowed.body?.data?.payment?.id) {
+      await member.client.post(`/payments/${nowAllowed.body.data.payment.id}/settle`,
+        { outcome: 'failed' });
+    }
+
+    /* Housekeeping: neither was bought, so neither leaves a trace. */
+    await admin.client.del(`/plans/${tooOld.body.data.id}`);
+    await admin.client.del(`/plans/${tooYoung.body.data.id}`);
+
+    const shipped = (await admin.client.get('/plans')).body.data
+      .find((p) => String(p.name).toLowerCase() === 'under 18');
+    check('the organisation’s own Under 18 plan carries the bound it is named for',
+      !shipped || shipped.maxAge === 17, shipped);
+  }
 
   /* — members — */
   const createdMember = await admin.client.post('/members', {

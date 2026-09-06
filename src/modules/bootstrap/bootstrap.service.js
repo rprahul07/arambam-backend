@@ -116,7 +116,18 @@ const REGISTRATIONS_WITH_ATTENDANCE = `
               FROM registration_attendance a
              WHERE a.registration_id = r.id),
            '{}'
-         ) AS attended_dates
+         ) AS attended_dates,
+         /* When each of those days was marked, in the same order.
+            registrations.checked_in_at is written once and never moves, so
+            on a course it holds the first day somebody ever came — showing it
+            as today's arrival time is how the desk was told a member had
+            checked in at eight the previous evening. */
+         COALESCE(
+           (SELECT array_agg(a.marked_at ORDER BY a.session_date)
+              FROM registration_attendance a
+             WHERE a.registration_id = r.id),
+           '{}'
+         ) AS attended_times
     FROM registrations r
    ORDER BY r.registered_at DESC`;
 

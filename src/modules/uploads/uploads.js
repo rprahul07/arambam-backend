@@ -3,7 +3,8 @@ import asyncHandler from '../../utils/asyncHandler.js';
 import ApiError from '../../utils/ApiError.js';
 import { created } from '../../utils/response.js';
 import { authenticate, staffOnly } from '../../middleware/auth.js';
-import { uploadImage } from '../../middleware/upload.js';
+import fs from 'node:fs';
+import { looksLikeDeclaredImage, uploadImage } from '../../middleware/upload.js';
 import { writeLimiter } from '../../middleware/rateLimit.js';
 import {
   store,
@@ -18,6 +19,24 @@ const router = Router();
 
 async function handleUpload(req, res, folder) {
   if (!req.file) throw ApiError.badRequest('Choose an image to upload');
+
+  /* The bytes have to match the format the upload claims to be.
+   *
+   * `fileFilter` can only see the declared content type, which is whatever the
+   * client chose to say — a text file announced as `image/png` sailed through
+   * and was kept in the public bucket under a `.png` name. Checked here
+   * instead, where the file actually exists.
+   *
+   * Remote storage keeps it in memory; local storage has already written it to
+   * disk, so that copy is read back and removed if it turns out to be a lie. */
+  const head = req.file.buffer
+    ? req.file.buffer.subarray(0, 16)
+    : await fs.promises.readFile(req.file.path).then((b) => b.subarray(0, 16)).catch(() => null);
+
+  if (!looksLikeDeclaredImage(head, req.file.mimetype)) {
+    if (req.file.path) await fs.promises.unlink(req.file.path).catch(() => undefined);
+    throw ApiError.badRequest('That file is not a JPEG, PNG, WebP or GIF image');
+  }
 
   const stored = await store(req.file, folder);
 

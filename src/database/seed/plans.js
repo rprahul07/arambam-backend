@@ -22,6 +22,10 @@
  * The patron line is the organisation's own wording, replacing ours. They
  * asked what "supports one student's membership for a year" meant, which is a
  * fair question about a sentence we wrote and they had not.
+ *
+ * `minAge` and `maxAge` are inclusive and either may be omitted. They are the
+ * plan's own property rather than a rule in code, so the organisation can move
+ * the line from the admin screen.
  */
 export const MEMBERSHIP_PLANS = [
   {
@@ -30,6 +34,8 @@ export const MEMBERSHIP_PLANS = [
     description: 'For members under the age of eighteen.',
     price: 100,
     durationMonths: 12,
+    /* Named a bound it never enforced: a nineteen-year-old could buy it. */
+    maxAge: 17,
     benefits: [
       'Twelve months from the day you join',
       'A guardian’s details are recorded with the membership',
@@ -44,6 +50,7 @@ export const MEMBERSHIP_PLANS = [
     description: 'For members aged eighteen and over.',
     price: 300,
     durationMonths: 12,
+    minAge: 18,
     benefits: ['Twelve months from the day you join'],
     active: true,
     /* The one most people are expected to take. */
@@ -56,6 +63,7 @@ export const MEMBERSHIP_PLANS = [
     description: 'Membership for yourself, and for a student.',
     price: 3000,
     durationMonths: 12,
+    minAge: 18,
     benefits: [
       'Twelve months from the day you join',
       'Supports one student to participate in workshops at Aarambam',

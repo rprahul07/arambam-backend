@@ -77,6 +77,11 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
 CREATE INDEX IF NOT EXISTS refresh_tokens_user_idx    ON refresh_tokens (user_id);
 CREATE INDEX IF NOT EXISTS refresh_tokens_expires_idx ON refresh_tokens (expires_at);
 
+-- When the token was rotated out, as distinct from revoked by signing out or
+-- by an administrator. Only a rotation is eligible for the reuse grace window
+-- — see `REFRESH_REUSE_GRACE_SECONDS`.
+ALTER TABLE refresh_tokens ADD COLUMN IF NOT EXISTS rotated_at timestamptz;
+
 -- ---------------------------------------------------------------------------
 -- MEMBERS — the profile from the bilingual registration form (v0.2):
 -- personal, contact, address, guardian, ID proof, medical and consents.
@@ -429,6 +434,46 @@ CREATE INDEX IF NOT EXISTS registrations_ref_idx      ON registrations (referenc
 -- been sent.
 ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS reminder_sent_at timestamptz;
 
+-- ---------------------------------------------------------------------------
+-- AGE-RESTRICTED PLANS
+--
+-- The "Under 18" plan was under-18 in its name only. A nineteen-year-old could
+-- pick it and pay a hundred rupees instead of three hundred, and nothing
+-- anywhere objected. The bound belongs on the plan rather than in code so the
+-- organisation can change it without a deploy, and so the same numbers drive
+-- the pricing page, the purchase and the admin plan editor.
+--
+-- Both are inclusive and both are optional: a plan with neither is open to
+-- everybody, which is what every existing plan becomes.
+-- ---------------------------------------------------------------------------
+-- ---------------------------------------------------------------------------
+-- CALENDAR SUBSCRIPTION
+--
+-- A calendar client cannot sign in — it fetches a URL with no cookie and no
+-- bearer token — so the feed is authorised by an unguessable token in the
+-- path. 32 random bytes, issued only to its owner, and rotatable, which is
+-- the remedy when somebody shares theirs by mistake.
+-- ---------------------------------------------------------------------------
+ALTER TABLE users ADD COLUMN IF NOT EXISTS calendar_token text;
+CREATE UNIQUE INDEX IF NOT EXISTS users_calendar_token_key ON users (calendar_token)
+  WHERE calendar_token IS NOT NULL;
+
+ALTER TABLE membership_plans ADD COLUMN IF NOT EXISTS min_age integer;
+ALTER TABLE membership_plans ADD COLUMN IF NOT EXISTS max_age integer;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'membership_plans_age_range'
+  ) THEN
+    ALTER TABLE membership_plans ADD CONSTRAINT membership_plans_age_range CHECK (
+      (min_age IS NULL OR (min_age >= 0 AND min_age <= 120))
+      AND (max_age IS NULL OR (max_age >= 0 AND max_age <= 120))
+      AND (min_age IS NULL OR max_age IS NULL OR min_age <= max_age)
+    );
+  END IF;
+END $$;
+
 -- Identity document: PAN only, and optional.
 --
 -- The Aadhaar / Voter ID / Driving Licence columns are dropped rather than
@@ -679,12 +724,13 @@ CREATE INDEX IF NOT EXISTS notifications_user_idx   ON notifications (user_id, c
 CREATE INDEX IF NOT EXISTS notifications_unread_idx ON notifications (user_id) WHERE read = false;
 
 -- ---------------------------------------------------------------------------
--- EMAIL TEMPLATES — the six templates the settings screen edits.
+-- EMAIL TEMPLATES — the templates the settings screen edits.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS email_templates (
   key         text PRIMARY KEY CHECK (key IN (
-                'account_registration','payment_confirmation','event_confirmation',
-                'event_reminder','renewal_reminder','event_cancellation')),
+                'account_registration','password_reset','payment_confirmation',
+                'event_confirmation','event_reminder','renewal_reminder',
+                'event_cancellation')),
   name        text NOT NULL,
   description text NOT NULL DEFAULT '',
   subject     text NOT NULL,
@@ -698,6 +744,38 @@ CREATE TABLE IF NOT EXISTS email_templates (
 DROP TRIGGER IF EXISTS email_templates_touch ON email_templates;
 CREATE TRIGGER email_templates_touch BEFORE UPDATE ON email_templates
   FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- The password reset template.
+--
+-- A reset used to borrow `account_registration`, so somebody who had
+-- forgotten their password was emailed "Confirm your email to finish joining
+-- Aarambam" — and an administrator switching that template off in the
+-- settings screen turned password resets off along with it, silently.
+--
+-- Databases created before this need the constraint widened and the row
+-- added; `CREATE TABLE IF NOT EXISTS` above does neither.
+ALTER TABLE email_templates DROP CONSTRAINT IF EXISTS email_templates_key_check;
+ALTER TABLE email_templates ADD CONSTRAINT email_templates_key_check CHECK (key IN (
+  'account_registration','password_reset','payment_confirmation',
+  'event_confirmation','event_reminder','renewal_reminder','event_cancellation'
+));
+
+INSERT INTO email_templates (key, name, description, subject, body, enabled, variables, sort_order)
+VALUES (
+  'password_reset',
+  'Password reset',
+  'Sent when somebody asks to reset their password. Carries the reset link.',
+  'Reset your Aarambam password',
+  'Hello {{member_name}},' || chr(10) || chr(10) ||
+  'Somebody asked to reset the password for this Aarambam account. Use the link below to choose a new one:' || chr(10) || chr(10) ||
+  '{{reset_link}}' || chr(10) || chr(10) ||
+  'The link can be used once and expires in an hour. If this was not you, ignore this message — nothing has changed.' || chr(10) || chr(10) ||
+  '— Aarambam',
+  true,
+  '["member_name","reset_link"]'::jsonb,
+  2
+)
+ON CONFLICT (key) DO NOTHING;
 
 -- ---------------------------------------------------------------------------
 -- SETTINGS — singleton configuration documents, keyed by name.
