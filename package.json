@@ -2,7 +2,7 @@
   "name": "aarambam-backend",
   "version": "2.0.0",
   "private": true,
-  "description": "Aarambam — Event & Membership Management REST API",
+  "description": "Aarambam \u2014 Event & Membership Management REST API",
   "type": "module",
   "main": "src/server.js",
   "engines": {
@@ -15,7 +15,10 @@
     "db:reset": "node src/database/migrate.js --reset",
     "db:seed": "node src/database/seed/index.js",
     "db:seed:clean": "node src/database/seed/index.js --minimal",
-    "verify": "node scripts/verify.js"
+    "verify": "node scripts/verify.js",
+    "integration": "node scripts/integration.js",
+    "edges": "node scripts/edges.js",
+    "test": "node scripts/verify.js && node scripts/integration.js && node scripts/edges.js"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.2.17",
