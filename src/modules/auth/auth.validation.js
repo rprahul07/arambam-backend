@@ -73,10 +73,18 @@ export const registerSchema = z
      * administrator's member list showed an empty City for nearly everybody.
      * A field that is mandatory in one place and unasked in another is not a
      * form, it is a trap.
+     *
+     * Optional *here* and required on the form, which is deliberate and is
+     * about deployment order rather than about the rule. The browser bundle
+     * and the API ship separately: make the API insist on a field the
+     * currently-published bundle does not send yet and sign-up stops working
+     * for everybody until the front end catches up. The form asks for all
+     * three and will not submit without them; the API accepts an older client
+     * rather than turning it away.
      */
-    city: z.string().trim().min(2, 'Enter the town or city').max(80),
-    district: z.string().trim().min(2, 'Enter the district').max(80),
-    state: z.string().trim().min(2, 'Enter the state').max(80),
+    city: z.string().trim().max(80).default(''),
+    district: z.string().trim().max(80).default(''),
+    state: z.string().trim().max(80).default(''),
     whatsappNumber: phone,
     whatsappGroupConsent: z.boolean().default(false),
 

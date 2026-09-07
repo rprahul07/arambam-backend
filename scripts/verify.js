@@ -419,6 +419,22 @@ try {
   check('every answer on the form reaches the record', mismatches.length === 0,
     mismatches.map(([f, e]) => `${f}: expected ${JSON.stringify(e)}, got ${JSON.stringify(stored[f])}`));
 
+  /* An older browser bundle, which does not know about the three address
+     questions yet. The API has to take it rather than refusing everybody who
+     has not reloaded — the bundle and the server ship separately. */
+  {
+    const { city, district, state, ...withoutAddressParts } = joining;
+    void city; void district; void state;
+    const older = await client().post('/auth/register', {
+      ...withoutAddressParts, email: `older.client.${Date.now()}@example.com`,
+    });
+    check('an older client that omits town, district and state can still join',
+      older.status === 201, { status: older.status, errors: older.body?.errors });
+    check('and those columns come back empty rather than missing',
+      older.status !== 201 || (older.body.data.member.city ?? '') === '',
+      older.body?.data?.member?.city);
+  }
+
   /* PAN is optional, so both shapes have to work. */
   const withPan = await client().post('/auth/register',
     { ...joining, email: `pan.${Date.now()}@example.com`, panNumber: 'abcde1234f' });
