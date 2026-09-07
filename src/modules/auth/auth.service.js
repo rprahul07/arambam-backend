@@ -188,8 +188,11 @@ export const revokeAllSessions = (userId) =>
  * across a table, so this is a single submission: the questions from the paper
  * form, plus the email and password that get them back in later.
  *
- * The address arrives as one field, as the form asks it, and is kept in
- * `address_line1`. The other address columns stay for records an administrator
+ * The street address arrives as one field, as the paper form asks it, and is
+ * kept in `address_line1`. Town, district and state are asked separately —
+ * they were not, and the office was left with an empty City column against
+ * nearly every member. The remaining address columns stay for records an
+ * administrator
  * enters through the longer form, and default to empty here.
  *
  * The account is created verified and a session is issued straight away — the
@@ -218,12 +221,12 @@ export async function register(input, context = {}) {
       `INSERT INTO members (
          user_id, member_id, full_name, age, gender,
          email, phone, whatsapp_number, whatsapp_group_consent,
-         address_line1,
+         address_line1, city, district, state,
          guardian_name, guardian_relation, guardian_phone,
          pan_number,
          has_medical_conditions, medical_notes,
          media_consent, declaration_accepted, status)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,'pending')
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,'pending')
        RETURNING *`,
       [
         created.id,
@@ -236,6 +239,9 @@ export async function register(input, context = {}) {
         input.whatsappNumber,
         input.whatsappGroupConsent,
         input.address,
+        input.city,
+        input.district,
+        input.state,
         /* Only kept for a member the form actually asked them of. */
         isMinor ? (input.guardianName ?? null) : null,
         isMinor ? (input.guardianRelation ?? null) : null,

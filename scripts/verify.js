@@ -364,7 +364,10 @@ try {
     fullName: 'Verification Tester',
     age: 34,
     gender: 'female',
-    address: '12 Example Street, Coonoor, Tamil Nadu 643101',
+    address: '12 Example Street, Coonoor',
+    city: 'Coonoor',
+    district: 'Nilgiris',
+    state: 'Tamil Nadu',
     whatsappNumber: '+91 90000 11111',
     whatsappGroupConsent: true,
     idProofType: 'aadhaar',
@@ -403,6 +406,12 @@ try {
     whatsappNumber: joining.whatsappNumber,
     whatsappGroupConsent: joining.whatsappGroupConsent,
     addressLine1: joining.address,
+    /* The columns the office sorts and filters by. Sign-up did not ask for
+       them, so the member list showed an empty City against nearly everybody
+       who had joined themselves. */
+    city: joining.city,
+    district: joining.district,
+    state: joining.state,
     hasMedicalConditions: joining.hasMedicalConditions,
     mediaConsent: joining.mediaConsent,
     declarationAccepted: joining.declarationAccepted,

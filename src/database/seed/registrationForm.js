@@ -80,6 +80,22 @@ export const REGISTRATION_FORM = {
       label: t('4. Address', 'முகவரி'),
       hint: t('Door number, street, area, town and PIN code.', 'கதவு எண், தெரு, பகுதி, ஊர் மற்றும் அஞ்சல் குறியீடு.'),
     },
+    /* Unnumbered on purpose: the paper form has one address question, and
+       renumbering the rest to fit these in would make the digital form and
+       the printed one disagree about what "question 5" is. They sit under the
+       address box as part of the same question. */
+    city: {
+      label: t('Town / City', 'ஊர் / நகரம்'),
+      hint: t('', ''),
+    },
+    district: {
+      label: t('District', 'மாவட்டம்'),
+      hint: t('', ''),
+    },
+    state: {
+      label: t('State', 'மாநிலம்'),
+      hint: t('', ''),
+    },
     phone: {
       label: t('5. Phone Number', 'தொலைபேசி எண்'),
       hint: t('', ''),

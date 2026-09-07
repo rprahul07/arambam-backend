@@ -63,6 +63,20 @@ export const registerSchema = z
     age: z.coerce.number().int().min(1, 'Enter an age').max(120),
     gender: z.enum(GENDER_VALUES, { errorMap: () => ({ message: 'Select one' }) }),
     address: z.string().trim().min(4, 'Enter the address').max(200),
+    /**
+     * Asked separately from the address box, because they are the columns the
+     * office actually sorts and filters by.
+     *
+     * The paper form has one address line and this followed it, so `city`,
+     * `district` and `state` were never filled in at sign-up — while the
+     * member's own profile screen went on marking them required, and the
+     * administrator's member list showed an empty City for nearly everybody.
+     * A field that is mandatory in one place and unasked in another is not a
+     * form, it is a trap.
+     */
+    city: z.string().trim().min(2, 'Enter the town or city').max(80),
+    district: z.string().trim().min(2, 'Enter the district').max(80),
+    state: z.string().trim().min(2, 'Enter the state').max(80),
     whatsappNumber: phone,
     whatsappGroupConsent: z.boolean().default(false),
 
